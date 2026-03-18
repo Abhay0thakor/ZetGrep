@@ -31,7 +31,7 @@ Detailed guides for every feature:
 1.  [**Basic Usage**](docs/USAGE.md) - Flags, filtering, and patterns.
 2.  [**Advanced Configuration**](docs/ADVANCED.md) - JSONL streaming, templating, and "Max Power" features.
 3.  [**Custom Plugins**](docs/PLUGINS.md) - How to build your own tools.
-4.  [**AI Prompt Templates**](docs/PROMPTS.md) - Use AI to generate complex configs.
+4.  [**AI Master Prompt**](docs/AI_MASTER_PROMPT.md) - 🧠 **Copy-paste this to make any AI a ZetGrep Expert.**
 5.  [**Real-World Examples**](docs/EXAMPLES.md) - Scenarios and safe sample data.
 
 ## 🏁 Quick Start
