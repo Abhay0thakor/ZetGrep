@@ -1,0 +1,5 @@
+id: whois
+name: Whois Lookup
+description: Performs a whois lookup for a domain
+command: "whois {{match}} | grep 'Registrar:' | head -n 1"
+field: registrar

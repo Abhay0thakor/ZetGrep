@@ -1,0 +1,5 @@
+id: unquote_json
+name: Unquote JSON
+description: Unquotes a JSON escaped string
+command: "echo {{match}} | jq -r '.'"
+field: unquoted

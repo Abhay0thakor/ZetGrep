@@ -1,0 +1,5 @@
+id: jq_pretty
+name: JQ Pretty Print
+description: Pretty-prints a JSON match
+command: "echo {{match}} | jq '.'"
+field: formatted_json

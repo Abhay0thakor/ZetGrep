@@ -1,0 +1,5 @@
+id: shodan_lookup
+name: Shodan Host Lookup
+description: Checks an IP in Shodan (requires CLI)
+command: "shodan host {{match}} | head -n 5"
+field: shodan_data

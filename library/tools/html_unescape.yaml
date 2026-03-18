@@ -1,0 +1,5 @@
+id: html_unescape
+name: HTML Unescape
+description: Unescapes HTML entities in a string
+command: "python3 -c \"import sys, html; print(html.unescape(sys.stdin.read()))\""
+field: unescaped

@@ -1,0 +1,5 @@
+id: check_s3
+name: Check S3 Bucket
+description: Checks if an S3 bucket is publicly accessible
+command: "curl -s -o /dev/null -w \"%{http_code}\" http://{{match}}.s3.amazonaws.com"
+field: status_code

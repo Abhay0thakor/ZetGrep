@@ -1,0 +1,34 @@
+# Binaries
+zetgrep
+zetgrep.exe
+
+# Build files
+*.o
+*.a
+bin/
+
+# IDEs
+.vscode/
+.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Scan Results
+results/*.json
+results/*.txt
+*.log
+
+# Temporary test files
+test_data.jsonl
+test_input.yaml
+config.yaml
+library/inputs/all_inputs.yaml
+
+
+IMPROVEMENTS.md
+ZetGrep_DOCUMENTATION.md
+results.txt
+results.json
+CONTEXT.md

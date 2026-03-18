@@ -1,0 +1,5 @@
+id: jwt_decode
+name: JWT Decoder
+description: Decodes the header and payload of a JWT
+command: "echo {{match}} | cut -d. -f1,2 | base64 -d 2>/dev/null"
+field: jwt_data

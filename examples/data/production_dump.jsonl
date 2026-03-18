@@ -1,0 +1,5 @@
+{"url":"https://api.internal.corp/v1/auth","body":"Authentication header: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"}
+{"url":"https://github.com/dev-team/repo","body":"Check out this encoded payload: WVdSdZetGrepXND0K and the server is at 10.0.0.5"}
+{"url":"https://aws-console.amazon.com/s3","body":"Access Denied for AKIAIOSFODNN7EXAMPLE on bucket test-bucket-01"}
+{"url":"https://example.com/debug","body":"PHP Error at /var/www/html/db.php line 45: Connection failed to 172.16.254.1"}
+{"url":"https://identity.provider.com/.well-known","body":"Public key: MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA75"}

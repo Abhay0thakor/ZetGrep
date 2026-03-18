@@ -1,0 +1,5 @@
+id: url_decode
+name: URL Decode
+description: Decodes a URL-encoded string
+command: "python3 -c \"import sys, urllib.parse; print(urllib.parse.unquote(sys.stdin.read()))\""
+field: decoded

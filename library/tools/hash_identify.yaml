@@ -1,0 +1,5 @@
+id: hash_id
+name: Hash Identifier
+description: Attempts to identify a hash type
+command: "python3 -c \"import sys; h = sys.stdin.read().strip(); print('MD5' if len(h)==32 else 'SHA1' if len(h)==40 else 'SHA256' if len(h)==64 else 'Unknown')\""
+field: hash_type

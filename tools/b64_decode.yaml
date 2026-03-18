@@ -1,0 +1,8 @@
+id: b64-decode
+name: Base64 Decoder
+description: Decodes matches from Base64 to cleartext
+command: "echo '{{match}}' | base64 -d"
+field: "Decoded Content"
+apply_to: 
+  - "base64"
+  - "api-keys"

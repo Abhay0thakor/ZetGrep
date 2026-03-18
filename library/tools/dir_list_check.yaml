@@ -1,0 +1,5 @@
+id: dir_listing
+name: Directory Listing Check
+description: Checks if a URL has directory listing enabled
+command: "curl -s {{match}} | grep -qi \"Index of /\" && echo 'Enabled' || echo 'Disabled'"
+field: listing_status

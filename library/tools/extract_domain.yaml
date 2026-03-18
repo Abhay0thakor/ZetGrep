@@ -1,0 +1,5 @@
+id: extract_domain
+name: Extract Domain
+description: Extracts the domain name from a URL
+command: "echo {{match}} | awk -F/ '{print \$3}'"
+field: domain
