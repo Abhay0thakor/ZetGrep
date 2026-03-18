@@ -32,7 +32,8 @@ Detailed guides for every feature:
 2.  [**Advanced Configuration**](docs/ADVANCED.md) - JSONL streaming, templating, and "Max Power" features.
 3.  [**Custom Plugins**](docs/PLUGINS.md) - How to build your own tools.
 4.  [**AI Master Prompt**](docs/AI_MASTER_PROMPT.md) - 🧠 **Copy-paste this to make any AI a ZetGrep Expert.**
-5.  [**Real-World Examples**](docs/EXAMPLES.md) - Scenarios and safe sample data.
+5.  [**Test Prompts**](docs/TEST_PROMPTS.md) - 🧪 **Challenge AI to build complex ZetGrep workflows.**
+6.  [**Real-World Examples**](docs/EXAMPLES.md) - Scenarios and safe sample data.
 
 ## 🏁 Quick Start
 Scan for IP addresses in a JSONL file and format the output:
