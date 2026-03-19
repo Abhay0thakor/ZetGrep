@@ -65,6 +65,10 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/tools/save", s.handleSaveTool)
 	mux.HandleFunc("/api/tools/delete", s.handleDeleteTool)
 
+	mux.HandleFunc("/logo.svg", func(w http.ResponseWriter, r *http.Request) {
+		http.ServeFile(w, r, "logo.svg")
+	})
+
 	mux.Handle("/docs/", http.StripPrefix("/docs/", http.FileServer(http.Dir("docs"))))
 	mux.Handle("/", http.FileServer(http.FS(s.staticFS)))
 

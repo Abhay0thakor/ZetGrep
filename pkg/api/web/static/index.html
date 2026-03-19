@@ -60,7 +60,7 @@
            :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'">
         
         <div class="h-16 flex items-center px-6 border-b border-dark-border gap-3">
-            <div class="w-8 h-8 bg-primary rounded flex items-center justify-center text-black font-black font-mono">Z</div>
+            <img src="/logo.svg" class="w-8 h-8" alt="ZetGrep Logo">
             <div class="flex-1">
                 <h1 class="text-sm font-black tracking-tighter text-white uppercase">ZetGrep <span class="text-primary opacity-80 text-[10px]">MC_2.0</span></h1>
                 <p class="text-[8px] text-slate-500 font-mono tracking-widest uppercase">Autonomous Intelligence</p>
@@ -481,7 +481,7 @@
     <script>
         function app() {
             return {
-                version: 'v0.0.2', scanning: false, loadingFile: false, loadedFile: null, targetPath: '.', saveAs: '', smartMode: false, entropyMode: false, 
+                version: 'v0.0.3', scanning: false, loadingFile: false, loadedFile: null, targetPath: '.', saveAs: '', smartMode: false, entropyMode: false, 
                 jsonlMode: false, jsonlConfig: { target: 'body', id: 'url', decode: false },
                 sideTab: 'patterns', activeTab: 'all', selectedToolIDs: [], patterns: [], selectedPatterns: [], results: [], history: [], tools: [],
                 resultFilter: '', patternSearch: '', pageSize: 50, page: 1, batch: [], toasts: [], logs: [], showConsole: false, sortBy: 'id',

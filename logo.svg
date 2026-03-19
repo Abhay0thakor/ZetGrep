@@ -1,0 +1,18 @@
+<svg width="200" height="200" viewBox="0 0 200 200" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="cyberGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#10b981;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#059669;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+  <!-- Background Shield -->
+  <path d="M100 20 L170 50 L170 120 C170 160 100 185 100 185 C100 185 30 160 30 120 L30 50 Z" fill="#0f172a" stroke="url(#cyberGradient)" stroke-width="8"/>
+  <!-- Stylized Z -->
+  <path d="M65 70 L135 70 L65 130 L135 130" fill="none" stroke="url(#cyberGradient)" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Focus Scope Lines -->
+  <circle cx="100" cy="100" r="60" fill="none" stroke="#10b981" stroke-width="2" stroke-dasharray="10 5" opacity="0.3"/>
+  <line x1="100" y1="35" x2="100" y2="55" stroke="#10b981" stroke-width="4"/>
+  <line x1="100" y1="145" x2="100" y2="165" stroke="#10b981" stroke-width="4"/>
+  <line x1="35" y1="100" x2="55" y2="100" stroke="#10b981" stroke-width="4"/>
+  <line x1="145" y1="100" x2="165" y2="100" stroke="#10b981" stroke-width="4"/>
+</svg>
