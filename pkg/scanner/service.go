@@ -10,6 +10,7 @@ import (
 	"sync"
 	"regexp"
 	"runtime"
+	"fmt"
 
 	pdregexp "github.com/projectdiscovery/utils/regexp"
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
@@ -32,7 +33,6 @@ type ScannerService struct {
 	Classifier   *classifier.Classifier
 	Tools        []models.Tool
 	patternCache sync.Map
-	// Global semaphore to limit concurrent external processes
 	processSem chan struct{}
 }
 
@@ -50,11 +50,8 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 		cfg.ToolsDir, _ = GetToolDir()
 	}
 
-	// Limit to number of CPUs or 20, whichever is smaller, to prevent OS thrashing
 	maxProc := runtime.NumCPU() * 2
-	if maxProc > 50 {
-		maxProc = 50
-	}
+	if maxProc > 50 { maxProc = 50 }
 
 	return &ScannerService{
 		Engine:       engine,
@@ -80,21 +77,39 @@ func (s *ScannerService) getPattern(name string) (models.Pattern, error) {
 	return p, nil
 }
 
-// executeToolWithLimit ensures we don't spawn too many processes at once
 func (s *ScannerService) executeToolWithLimit(t models.Tool, res models.Result) (string, error) {
 	s.processSem <- struct{}{}
 	defer func() { <-s.processSem }()
 	return t.Execute(res)
 }
 
+// getNestedField retrieves a value from a nested map using dot notation
+func getNestedField(data map[string]interface{}, path string) (string, bool) {
+	parts := strings.Split(path, ".")
+	var current interface{} = data
+	for _, part := range parts {
+		if m, ok := current.(map[string]interface{}); ok {
+			current = m[part]
+		} else {
+			return "", false
+		}
+	}
+	if str, ok := current.(string); ok {
+		return str, true
+	}
+	if current != nil {
+		return fmt.Sprintf("%v", current), true
+	}
+	return "", false
+}
+
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
-	if s.Config.Input.Format == "jsonl" {
+	if s.Config.Input.Format == "jsonl" || s.Config.Input.Format == "json" {
 		return s.RunJSONLScan(ctx, opts)
 	}
 
 	resultChan := make(chan *models.Result, 2000)
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	
 	patternQueue := make(chan string)
 	var wg sync.WaitGroup
 
@@ -137,14 +152,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
 						PutResult(res); continue
 					}
-					
-					// Tool execution moved to separate pool if many matches, but here we keep it simple with the semaphore
 					for _, t := range activeTools {
 						if val, _ := s.executeToolWithLimit(t, *res); val != "" {
 							res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
 						}
 					}
-
 					select {
 					case <-ctx.Done(): return
 					case resultChan <- res:
@@ -191,8 +203,14 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 	}
 
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	targetField := s.Config.Input.Target
+	
+	// Collect all targets (support both legacy and new array)
+	var targets []string
+	if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
+	targets = append(targets, s.Config.Input.Targets...)
+	
 	idField := s.Config.Input.ID
+	filters := s.Config.Input.Filters
 
 	lineChan := make(chan string, 5000)
 	var wg sync.WaitGroup
@@ -204,41 +222,53 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			defer wg.Done()
 			for line := range lineChan {
 				var data map[string]interface{}
-				// Use a more efficient decoder for large objects if needed, but json.Unmarshal is standard
 				if err := json.Unmarshal([]byte(line), &data); err != nil { continue }
 
-				content, ok := data[targetField].(string)
-				if !ok { continue }
-				
-				idVal, _ := data[idField].(string)
+				// Apply Filters (e.g. status: "200")
+				matchFilters := true
+				for field, val := range filters {
+					if v, ok := getNestedField(data, field); !ok || v != val {
+						matchFilters = false
+						break
+					}
+				}
+				if !matchFilters { continue }
+
+				idVal, _ := getNestedField(data, idField)
 				if idVal == "" { idVal = "unknown" }
 
-				for _, cp := range compiledPatterns {
-					matches := cp.comp.FindAllStringSubmatch(content, -1)
-					for _, matchGroup := range matches {
-						if len(matchGroup) == 0 { continue }
-						match := matchGroup[0]
+				// Scan multiple targets
+				for _, targetField := range targets {
+					content, ok := getNestedField(data, targetField)
+					if !ok { continue }
 
-						res := GetResult()
-						res.Pattern = cp.p.Name
-						res.File = idVal
-						res.Content = match
-						res.Matches = matchGroup
-						res.Entropy = utils.ShannonEntropy(match)
+					for _, cp := range compiledPatterns {
+						matches := cp.comp.FindAllStringSubmatch(content, -1)
+						for _, matchGroup := range matches {
+							if len(matchGroup) == 0 { continue }
+							match := matchGroup[0]
 
-						if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
-							PutResult(res); continue
-						}
+							res := GetResult()
+							res.Pattern = cp.p.Name
+							res.File = idVal
+							res.Content = match
+							res.Matches = matchGroup
+							res.Entropy = utils.ShannonEntropy(match)
 
-						for _, t := range activeTools {
-							if val, _ := s.executeToolWithLimit(t, *res); val != "" {
-								res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+							if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+								PutResult(res); continue
 							}
-						}
 
-						select {
-						case <-ctx.Done(): return
-						case resultChan <- res:
+							for _, t := range activeTools {
+								if val, _ := s.executeToolWithLimit(t, *res); val != "" {
+									res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+								}
+							}
+
+							select {
+							case <-ctx.Done(): return
+							case resultChan <- res:
+							}
 						}
 					}
 				}
@@ -251,9 +281,8 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			file, err := os.Open(path)
 			if err != nil { continue }
 			scanner := bufio.NewScanner(file)
-			// Efficient buffer management
 			buf := make([]byte, 64*1024)
-			scanner.Buffer(buf, 20*1024*1024) // 20MB max line
+			scanner.Buffer(buf, 20*1024*1024)
 
 			for scanner.Scan() {
 				select {

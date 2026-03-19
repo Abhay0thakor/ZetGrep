@@ -44,10 +44,13 @@ field: [string]                  # Label for the JSON output.
 #### B. Input Configuration (`inputs/*.yaml`)
 Defines how to parse structured log files (JSONL) for streaming.
 ```yaml
-format: jsonl                    # REQUIRED. Must be 'jsonl'.
-target: [string]                 # REQUIRED. The JSON field to scan. e.g., 'response.body'
+format: [jsonl|json|csv]         # REQUIRED.
+targets: [list of strings]       # REQUIRED. Multiple fields to scan (supports dot notation).
+                                 # e.g., ['body', 'headers', 'data.response.content']
 id: [string]                     # REQUIRED. The field to use as the identifier. e.g., 'url'
-decode: [bool]                   # OPTIONAL. If true, unescapes unicode/html in the target.
+decode: [bool]                   # OPTIONAL. If true, unescapes content in the targets.
+filters: [map of key:value]      # OPTIONAL. Only scan lines matching these criteria.
+                                 # e.g., { status_code: "200", method: "GET" }
 ```
 
 #### C. Global Configuration (`config.yaml`)

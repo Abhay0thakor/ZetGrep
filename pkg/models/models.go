@@ -60,10 +60,12 @@ type Globals struct {
 }
 
 type InputConfig struct {
-	Format string `json:"format" yaml:"format"` // "jsonl"
-	Target string `json:"target" yaml:"target"` // e.g. "body"
-	ID     string `json:"id" yaml:"id"`         // e.g. "url"
-	Decode bool   `json:"decode" yaml:"decode"` // Whether to decode the target field (e.g. if it's a JSON string inside JSON)
+	Format  string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
+	Target  string            `json:"target" yaml:"target"`   // Legacy single target
+	Targets []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
+	ID      string            `json:"id" yaml:"id"`           // Source identifier field
+	Decode  bool              `json:"decode" yaml:"decode"`   // Unescape target content
+	Filters map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
 }
 
 func (t *Tool) Execute(res Result) (string, error) {

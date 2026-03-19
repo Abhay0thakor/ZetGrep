@@ -1,0 +1,9 @@
+format: jsonl
+targets:
+  - url
+  - header
+  - body
+id: url
+filters:
+  status_code: "200"
+decode: true

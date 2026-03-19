@@ -1,4 +1,9 @@
 format: jsonl
-target: requestParameters
+targets:
+  - requestParameters.bucketName
+  - requestParameters.key
+  - responseElements.publicAccessBlockConfiguration
 id: eventName
+filters:
+  eventSource: "s3.amazonaws.com"
 decode: true
