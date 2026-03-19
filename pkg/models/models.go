@@ -60,12 +60,20 @@ type Globals struct {
 }
 
 type InputConfig struct {
-	Format  string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
-	Target  string            `json:"target" yaml:"target"`   // Legacy single target
-	Targets []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
-	ID      string            `json:"id" yaml:"id"`           // Source identifier field
-	Decode  bool              `json:"decode" yaml:"decode"`   // Unescape target content
-	Filters map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
+	Format    string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
+	Target    string            `json:"target" yaml:"target"`   // Legacy single target
+	Targets   []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
+	ID        string            `json:"id" yaml:"id"`           // Source identifier field
+	Decode    bool              `json:"decode" yaml:"decode"`   // Unescape target content
+	Filters   map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
+	CSVConfig CSVConfig         `json:"csv_config" yaml:"csv_config"`
+}
+
+type CSVConfig struct {
+	Separator string `json:"separator" yaml:"separator"` // default ","
+	HasHeader bool   `json:"has_header" yaml:"has_header"`
+	IDIndex   int    `json:"id_index" yaml:"id_index"`
+	TargetIdx []int  `json:"target_indices" yaml:"target_indices"`
 }
 
 func (t *Tool) Execute(res Result) (string, error) {

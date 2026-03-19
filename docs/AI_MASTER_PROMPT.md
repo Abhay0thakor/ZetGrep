@@ -45,12 +45,16 @@ field: [string]                  # Label for the JSON output.
 Defines how to parse structured log files (JSONL) for streaming.
 ```yaml
 format: [jsonl|json|csv]         # REQUIRED.
-targets: [list of strings]       # REQUIRED. Multiple fields to scan (supports dot notation).
-                                 # e.g., ['body', 'headers', 'data.response.content']
-id: [string]                     # REQUIRED. The field to use as the identifier. e.g., 'url'
+targets: [list of strings]       # REQUIRED. Multiple fields to scan (supports dot notation for JSON).
+                                 # For CSV: use column names (if header) or indices as strings.
+id: [string]                     # REQUIRED. The field to use as the identifier.
 decode: [bool]                   # OPTIONAL. If true, unescapes content in the targets.
 filters: [map of key:value]      # OPTIONAL. Only scan lines matching these criteria.
-                                 # e.g., { status_code: "200", method: "GET" }
+csv_config:                      # OPTIONAL. Required if format is 'csv'.
+  separator: [string]            # e.g., ',' or '\t'. Default is ','.
+  has_header: [bool]             # If true, first row is treated as names.
+  id_index: [int]                # Column index for the ID (if no header).
+  target_indices: [list of int]  # List of column indices to scan (if no header).
 ```
 
 #### C. Global Configuration (`config.yaml`)

@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"runtime"
 	"fmt"
+	"encoding/csv"
+	"io"
 
 	pdregexp "github.com/projectdiscovery/utils/regexp"
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
@@ -106,6 +108,9 @@ func getNestedField(data map[string]interface{}, path string) (string, bool) {
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	if s.Config.Input.Format == "jsonl" || s.Config.Input.Format == "json" {
 		return s.RunJSONLScan(ctx, opts)
+	}
+	if s.Config.Input.Format == "csv" {
+		return s.RunCSVScan(ctx, opts)
 	}
 
 	resultChan := make(chan *models.Result, 2000)
@@ -294,6 +299,120 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 		}
 	done:
 		close(lineChan)
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	return resultChan, nil
+}
+
+func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
+	resultChan := make(chan *models.Result, 5000)
+
+	var compiledPatterns []struct {
+		p    models.Pattern
+		comp *regexp.Regexp
+	}
+
+	for _, pName := range opts.Patterns {
+		p, err := s.getPattern(pName)
+		if err != nil { continue }
+		comp, err := regexp.Compile(p.Pattern)
+		if err == nil {
+			compiledPatterns = append(compiledPatterns, struct {
+				p    models.Pattern
+				comp *regexp.Regexp
+			}{p, comp})
+		}
+	}
+
+	activeTools := s.getActiveTools(opts.ToolIDs)
+	separator := s.Config.Input.CSVConfig.Separator
+	if separator == "" { separator = "," }
+	
+	idIdx := s.Config.Input.CSVConfig.IDIndex
+	targetIdxs := s.Config.Input.CSVConfig.TargetIdx
+	if len(targetIdxs) == 0 { targetIdxs = []int{0} }
+
+	recordChan := make(chan []string, 5000)
+	var wg sync.WaitGroup
+	numWorkers := runtime.NumCPU() * 2
+
+	for i := 0; i < numWorkers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for record := range recordChan {
+				idVal := "unknown"
+				if idIdx < len(record) { idVal = record[idIdx] }
+
+				for _, tIdx := range targetIdxs {
+					if tIdx >= len(record) { continue }
+					content := record[tIdx]
+
+					for _, cp := range compiledPatterns {
+						matches := cp.comp.FindAllStringSubmatch(content, -1)
+						for _, matchGroup := range matches {
+							if len(matchGroup) == 0 { continue }
+							match := matchGroup[0]
+
+							res := GetResult()
+							res.Pattern = cp.p.Name
+							res.File = idVal
+							res.Content = match
+							res.Matches = matchGroup
+							res.Entropy = utils.ShannonEntropy(match)
+
+							if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+								PutResult(res); continue
+							}
+
+							for _, t := range activeTools {
+								if val, _ := s.executeToolWithLimit(t, *res); val != "" {
+									res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+								}
+							}
+
+							select {
+							case <-ctx.Done(): return
+							case resultChan <- res:
+							}
+						}
+					}
+				}
+			}
+		}()
+	}
+
+	go func() {
+		for _, path := range opts.TargetPaths {
+			file, err := os.Open(path)
+			if err != nil { continue }
+			
+			reader := csv.NewReader(file)
+			reader.Comma = rune(separator[0])
+			reader.LazyQuotes = true
+			
+			if s.Config.Input.CSVConfig.HasHeader {
+				reader.Read() // Skip header
+			}
+
+			for {
+				record, err := reader.Read()
+				if err == io.EOF { break }
+				if err != nil { continue }
+				
+				select {
+				case <-ctx.Done():
+					file.Close()
+					goto done
+				case recordChan <- record:
+				}
+			}
+			file.Close()
+		}
+	done:
+		close(recordChan)
 		wg.Wait()
 		close(resultChan)
 	}()
