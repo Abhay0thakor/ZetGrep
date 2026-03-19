@@ -1,0 +1,4 @@
+format: jsonl
+target: request_path
+id: remote_addr
+decode: false

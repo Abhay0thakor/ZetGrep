@@ -1,0 +1,4 @@
+format: jsonl
+target: services.http.response.body
+id: ip
+decode: true

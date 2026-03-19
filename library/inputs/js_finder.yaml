@@ -1,0 +1,4 @@
+format: jsonl
+target: url
+id: source_js
+decode: false

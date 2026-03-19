@@ -1,0 +1,4 @@
+format: jsonl
+target: robots_content
+id: domain
+decode: false

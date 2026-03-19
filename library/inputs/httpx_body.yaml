@@ -1,0 +1,4 @@
+format: jsonl
+target: body
+id: url
+decode: true

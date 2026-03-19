@@ -1,0 +1,4 @@
+format: jsonl
+target: requestParameters
+id: eventName
+decode: true

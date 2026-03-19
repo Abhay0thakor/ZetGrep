@@ -1,0 +1,4 @@
+format: jsonl
+target: name
+id: domain
+decode: false

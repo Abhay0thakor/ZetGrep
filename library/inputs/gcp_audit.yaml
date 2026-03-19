@@ -1,0 +1,4 @@
+format: jsonl
+target: protoPayload.serviceData
+id: insertId
+decode: true

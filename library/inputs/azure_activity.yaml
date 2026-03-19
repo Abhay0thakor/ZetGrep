@@ -1,0 +1,4 @@
+format: jsonl
+target: properties.content
+id: resourceId
+decode: true

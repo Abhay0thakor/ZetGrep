@@ -1,0 +1,4 @@
+format: jsonl
+target: data
+id: ip_str
+decode: false

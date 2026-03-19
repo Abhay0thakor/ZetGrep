@@ -1,0 +1,4 @@
+format: jsonl
+target: raw_response
+id: endpoint
+decode: true
