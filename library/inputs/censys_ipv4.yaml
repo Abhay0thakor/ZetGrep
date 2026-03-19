@@ -1,4 +1,6 @@
 format: jsonl
-target: services.http.response.body
+targets:
+  - services.http.response.body
+  - services.banner
 id: ip
 decode: true

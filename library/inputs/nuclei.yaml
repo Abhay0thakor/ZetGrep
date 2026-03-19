@@ -1,4 +1,6 @@
 format: jsonl
-target: matched-at
+targets:
+  - matched-at
+  - host
 id: template-id
 decode: false

@@ -1,4 +1,6 @@
 format: jsonl
-target: request_path
+targets:
+  - request_path
+  - body_bytes_sent
 id: remote_addr
 decode: false

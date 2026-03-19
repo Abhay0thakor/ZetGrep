@@ -1,4 +1,6 @@
 format: jsonl
-target: data
+targets:
+  - data
+  - http.html
 id: ip_str
 decode: false

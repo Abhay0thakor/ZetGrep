@@ -1,4 +1,5 @@
 format: jsonl
-target: message
+targets:
+  - message
 id: step_name
 decode: false

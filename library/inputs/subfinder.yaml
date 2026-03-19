@@ -1,4 +1,5 @@
 format: jsonl
-target: host
+targets:
+  - host
 id: source
 decode: false

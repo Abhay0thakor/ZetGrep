@@ -1,4 +1,5 @@
 format: jsonl
-target: data
+targets:
+  - data
 id: key
 decode: true

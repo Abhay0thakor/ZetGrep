@@ -1,4 +1,5 @@
 format: jsonl
-target: name
+targets:
+  - name
 id: domain
 decode: false

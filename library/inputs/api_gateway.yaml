@@ -1,4 +1,6 @@
 format: jsonl
-target: request_body
+targets:
+  - request_body
+  - response_body
 id: requestId
 decode: true

@@ -1,4 +1,5 @@
 format: jsonl
-target: url
+targets:
+  - url
 id: source_js
 decode: false

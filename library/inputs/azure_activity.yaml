@@ -1,4 +1,6 @@
 format: jsonl
-target: properties.content
+targets:
+  - properties.content
+  - properties.message
 id: resourceId
 decode: true

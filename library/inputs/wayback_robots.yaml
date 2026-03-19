@@ -1,4 +1,5 @@
 format: jsonl
-target: robots_content
+targets:
+  - robots_content
 id: domain
 decode: false
