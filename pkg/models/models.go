@@ -99,6 +99,14 @@ func (t *Tool) Execute(res Result) (string, error) {
 		placeholder := fmt.Sprintf("{{match[%d]}}", i)
 		cmdStr = strings.ReplaceAll(cmdStr, placeholder, m)
 	}
+
+	// Tool Data Chaining (e.g., {{tool:b64_decode}})
+	for _, td := range res.ToolData {
+		placeholder := fmt.Sprintf("{{tool:%s}}", td.ToolID)
+		cmdStr = strings.ReplaceAll(cmdStr, placeholder, td.Value)
+		placeholderLabel := fmt.Sprintf("{{tool:%s}}", td.Label)
+		cmdStr = strings.ReplaceAll(cmdStr, placeholderLabel, td.Value)
+	}
 	
 	// Create context with timeout for tool execution
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

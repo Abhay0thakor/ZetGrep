@@ -1,36 +1,31 @@
 <!DOCTYPE html>
-<html lang="en" class="h-full">
+<html lang="en" class="h-full bg-slate-950 text-slate-200 selection:bg-primary selection:text-black">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>ZetGrep TERMINAL v4.5</title>
+    <title>ZetGrep // MISSION CONTROL v4.5</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@300;400;500;600;700&family=Fira+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700;800&family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         tailwind.config = {
             darkMode: 'class',
             theme: {
                 extend: {
-                    fontFamily: { sans: ['Fira Sans', 'sans-serif'], mono: ['Fira Code', 'monospace'] },
+                    fontFamily: { sans: ['Inter', 'sans-serif'], mono: ['JetBrains Mono', 'monospace'] },
                     colors: { 
-                        cyber: { 
-                            primary: '#00FF41', 
-                            dim: 'rgba(0, 255, 65, 0.1)', 
-                            dark: '#050505', 
-                            panel: '#0a0a0a', 
-                            border: '#1a1a1a',
-                            alert: '#FF003C' 
-                        } 
-                    },
-                    animation: {
-                        'pulse-slow': 'pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite',
-                        'scanline': 'scanline 8s linear infinite',
-                    },
-                    keyframes: {
-                        scanline: {
-                            '0%': { transform: 'translateY(-100%)' },
-                            '100%': { transform: 'translateY(100%)' }
+                        primary: 'var(--primary-color, #10b981)',
+                        dark: { 
+                            base: '#020617', // Slate 950
+                            surface: '#0f172a', // Slate 900
+                            muted: '#1e293b', // Slate 800
+                            border: '#334155' // Slate 700
+                        },
+                        accent: {
+                            success: '#10b981', // Emerald 500
+                            error: '#ef4444', // Red 500
+                            warn: '#f59e0b' // Amber 500
                         }
                     }
                 }
@@ -39,275 +34,538 @@
     </script>
     <style>
         [x-cloak] { display: none !important; }
-        body { background-color: #000; color: #e0e0e0; }
-        .cyber-border { border: 1px solid #1a1a1a; position: relative; }
-        .cyber-border::before { content: ''; position: absolute; top: -1px; left: -1px; width: 8px; height: 8px; border-top: 2px solid #00FF41; border-left: 2px solid #00FF41; }
-        .cyber-border::after { content: ''; position: absolute; bottom: -1px; right: -1px; width: 8px; height: 8px; border-bottom: 2px solid #00FF41; border-right: 2px solid #00FF41; }
+        :root { --primary-color: #10b981; }
         
-        .scanlines { position: fixed; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2)); background-size: 100% 4px; z-index: 50; opacity: 0.15; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: #050505; }
-        .custom-scrollbar::-webkit-scrollbar-thumb { background: #1a1a1a; border: 1px solid #00FF41; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #00FF41; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; height: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: var(--primary-color); }
         
-        .glow-text { text-shadow: 0 0 5px rgba(0, 255, 65, 0.5); }
-        .match-highlight { color: #000; background-color: #00FF41; font-weight: bold; padding: 0 2px; }
+        .glass-panel { background: rgba(15, 23, 42, 0.8); backdrop-filter: blur(12px); border: 1px solid rgba(51, 65, 85, 0.5); }
+        .result-row { border-left: 2px solid transparent; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+        .result-row:hover { border-left-color: var(--primary-color); background: rgba(51, 65, 85, 0.2); }
+        .match-tag { background: var(--primary-color); color: #000; padding: 0 4px; font-weight: 800; border-radius: 2px; }
+        
+        @keyframes scan { from { transform: translateY(-100%); } to { transform: translateY(100%); } }
+        .scan-anim { animation: scan 3s linear infinite; }
     </style>
 </head>
-<body class="font-sans h-full overflow-hidden flex flex-col selection:bg-cyber-primary selection:text-black" x-data="app()">
+<body class="font-sans h-full overflow-hidden flex flex-col md:flex-row" x-data="app()">
     
-    <div class="scanlines"></div>
+    <!-- Mobile Sidebar Overlay -->
+    <div x-show="mobileMenuOpen" x-cloak class="fixed inset-0 bg-black/60 backdrop-blur-sm z-[60] lg:hidden" @click="mobileMenuOpen = false"></div>
 
-    <!-- Top Command Bar -->
-    <header class="h-16 bg-cyber-dark border-b border-cyber-border flex items-center px-6 gap-6 flex-shrink-0 z-40 relative">
-        <div class="flex items-center gap-3">
-            <div class="w-8 h-8 bg-cyber-primary flex items-center justify-center font-black text-black text-lg font-mono">Z_</div>
-            <div>
-                <h1 class="text-lg font-bold text-white tracking-widest leading-none font-mono glow-text">ZET<span class="text-cyber-primary">GREP</span></h1>
-                <p class="text-[9px] text-cyber-primary uppercase tracking-[0.2em] opacity-70">System Ready</p>
+    <!-- Navigation Sidebar (Drawer on mobile) -->
+    <aside class="fixed inset-y-0 left-0 w-72 glass-panel border-r border-dark-border flex flex-col z-[70] transition-transform duration-300 transform lg:relative lg:translate-x-0"
+           :class="mobileMenuOpen ? 'translate-x-0' : '-translate-x-full'">
+        
+        <div class="h-16 flex items-center px-6 border-b border-dark-border gap-3">
+            <div class="w-8 h-8 bg-primary rounded flex items-center justify-center text-black font-black font-mono">Z</div>
+            <div class="flex-1">
+                <h1 class="text-sm font-black tracking-tighter text-white uppercase">ZetGrep <span class="text-primary opacity-80 text-[10px]">MC_2.0</span></h1>
+                <p class="text-[8px] text-slate-500 font-mono tracking-widest uppercase">Autonomous Intelligence</p>
             </div>
+            <button @click="mobileMenuOpen = false" class="lg:hidden text-slate-400 hover:text-white"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-width="2"></path></svg></button>
         </div>
 
-        <div class="h-8 w-px bg-cyber-border"></div>
-
-        <!-- Target Input -->
-        <div class="flex-1 flex items-center gap-4">
-            <div class="flex-1 relative group cyber-border bg-cyber-panel h-10 flex items-center">
-                <span class="pl-3 text-cyber-primary font-mono text-xs opacity-50">TARGET:</span>
-                <input type="text" x-model="targetPath" @keydown.enter="runScan" class="flex-1 bg-transparent border-none outline-none text-sm font-mono text-white px-3 placeholder:text-gray-700" placeholder="/path/to/scan or file.log">
-            </div>
-
-            <div class="w-48 relative group cyber-border bg-cyber-panel h-10 flex items-center">
-                <span class="pl-3 text-cyber-primary font-mono text-xs opacity-50">SESSION:</span>
-                <input type="text" x-model="saveAs" class="w-full bg-transparent border-none outline-none text-sm font-mono text-white px-3 placeholder:text-gray-700" placeholder="scan_01">
-            </div>
-
-            <button @click="runScan" 
-                    class="h-10 px-8 font-mono text-xs font-bold uppercase tracking-widest transition-all hover:bg-cyber-primary hover:text-black border border-cyber-primary flex items-center gap-2"
-                    :class="scanning ? 'bg-cyber-alert border-cyber-alert text-white animate-pulse' : 'text-cyber-primary'">
-                <span x-text="scanning ? 'ABORT SEQUENCE' : 'EXECUTE SCAN'"></span>
+        <nav class="flex border-b border-dark-border bg-slate-900/50">
+            <button @click="sideTab = 'patterns'" class="flex-1 py-3 text-[9px] font-black uppercase transition-all flex flex-col items-center gap-1" :class="sideTab === 'patterns' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16m-7 6h7" stroke-width="2.5"></path></svg>
+                <span>Modules</span>
             </button>
-        </div>
+            <button @click="sideTab = 'tools'" class="flex-1 py-3 text-[9px] font-black uppercase transition-all flex flex-col items-center gap-1" :class="sideTab === 'tools' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M13 10V3L4 14h7v7l9-11h-7z" stroke-width="2.5"></path></svg>
+                <span>Engine</span>
+            </button>
+            <button @click="sideTab = 'filters'" class="flex-1 py-3 text-[9px] font-black uppercase transition-all flex flex-col items-center gap-1" :class="sideTab === 'filters' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" stroke-width="2.5"></path></svg>
+                <span>Pruning</span>
+            </button>
+            <button @click="sideTab = 'history'" class="flex-1 py-3 text-[9px] font-black uppercase transition-all flex flex-col items-center gap-1" :class="sideTab === 'history' ? 'text-primary' : 'text-slate-500 hover:text-slate-300'">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M12 8v4l3 3m6-3a9 9 0 11-12 0 9 9 0 0112 0z" stroke-width="2.5"></path></svg>
+                <span>Logs</span>
+            </button>
+        </nav>
 
-        <!-- Toggles -->
-        <div class="flex items-center gap-4 font-mono text-[10px]">
-            <label class="flex items-center gap-2 cursor-pointer select-none group">
-                <div class="w-3 h-3 border border-cyber-primary flex items-center justify-center transition-colors" :class="smartMode ? 'bg-cyber-primary' : ''">
-                    <div x-show="smartMode" class="w-1.5 h-1.5 bg-black"></div>
+        <div class="flex-1 overflow-hidden flex flex-col">
+            <!-- Patterns Section -->
+            <div x-show="sideTab === 'patterns'" class="flex-1 flex flex-col p-4 overflow-hidden">
+                <div class="flex gap-2 mb-4">
+                    <input type="text" x-model="patternSearch" placeholder="Filter modules..." class="flex-1 bg-slate-950 border border-slate-700 text-[11px] p-2 rounded outline-none focus:border-primary text-white">
+                    <button @click="editPattern('')" class="w-8 h-8 bg-primary rounded flex items-center justify-center text-black font-black" title="NEW_MODULE">+</button>
                 </div>
-                <span :class="smartMode ? 'text-cyber-primary glow-text' : 'text-gray-500'">AI_FILTER</span>
-                <input type="checkbox" x-model="smartMode" class="hidden">
-            </label>
-            
-            <label class="flex items-center gap-2 cursor-pointer select-none group">
-                <div class="w-3 h-3 border border-cyber-primary flex items-center justify-center transition-colors" :class="entropyMode ? 'bg-cyber-primary' : ''">
-                    <div x-show="entropyMode" class="w-1.5 h-1.5 bg-black"></div>
+                <div class="flex justify-between items-center mb-3 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                    <span x-text="patterns.length + ' registered'"></span>
+                    <button @click="selectAllPatterns" class="text-primary/60 hover:text-primary">Bulk_Add</button>
                 </div>
-                <span :class="entropyMode ? 'text-cyber-primary glow-text' : 'text-gray-500'">ENTROPY</span>
-                <input type="checkbox" x-model="entropyMode" class="hidden">
-            </label>
-
-            <div class="h-6 w-px bg-cyber-border mx-2"></div>
-
-            <label class="flex items-center gap-2 cursor-pointer select-none group">
-                <div class="w-3 h-3 border border-cyber-primary flex items-center justify-center transition-colors" :class="jsonlMode ? 'bg-cyber-primary' : ''">
-                    <div x-show="jsonlMode" class="w-1.5 h-1.5 bg-black"></div>
-                </div>
-                <span :class="jsonlMode ? 'text-cyber-primary glow-text' : 'text-gray-500'">JSONL_MODE</span>
-                <input type="checkbox" x-model="jsonlMode" class="hidden">
-            </label>
-        </div>
-    </header>
-
-    <!-- JSONL Config Panel -->
-    <div x-show="jsonlMode" x-cloak class="bg-cyber-panel border-b border-cyber-border p-3 flex items-center justify-center gap-8 z-30 font-mono text-xs">
-        <div class="flex items-center gap-2">
-            <span class="text-cyber-primary">TARGET_FIELD:</span>
-            <input type="text" x-model="jsonlConfig.target" class="bg-black border border-cyber-border text-white px-2 py-1 outline-none focus:border-cyber-primary w-32">
-        </div>
-        <div class="flex items-center gap-2">
-            <span class="text-cyber-primary">ID_FIELD:</span>
-            <input type="text" x-model="jsonlConfig.id" class="bg-black border border-cyber-border text-white px-2 py-1 outline-none focus:border-cyber-primary w-32">
-        </div>
-        <label class="flex items-center gap-2 cursor-pointer">
-            <span class="text-cyber-primary">DECODE:</span>
-            <input type="checkbox" x-model="jsonlConfig.decode" class="accent-cyber-primary">
-        </label>
-    </div>
-
-    <div class="flex-1 flex overflow-hidden z-10">
-        <!-- Sidebar -->
-        <aside class="w-64 bg-cyber-dark border-r border-cyber-border flex flex-col font-mono">
-            <div class="flex border-b border-cyber-border">
-                <button @click="sideTab = 'patterns'" class="flex-1 py-3 text-[10px] uppercase font-bold hover:bg-cyber-dim hover:text-cyber-primary transition-colors" :class="sideTab === 'patterns' ? 'bg-cyber-dim text-cyber-primary border-b-2 border-cyber-primary' : 'text-gray-500'">Patterns</button>
-                <button @click="sideTab = 'tools'" class="flex-1 py-3 text-[10px] uppercase font-bold hover:bg-cyber-dim hover:text-cyber-primary transition-colors" :class="sideTab === 'tools' ? 'bg-cyber-dim text-cyber-primary border-b-2 border-cyber-primary' : 'text-gray-500'">Tools</button>
-                <button @click="sideTab = 'history'" class="flex-1 py-3 text-[10px] uppercase font-bold hover:bg-cyber-dim hover:text-cyber-primary transition-colors" :class="sideTab === 'history' ? 'bg-cyber-dim text-cyber-primary border-b-2 border-cyber-primary' : 'text-gray-500'">Logs</button>
-            </div>
-
-            <!-- Patterns -->
-            <div x-show="sideTab === 'patterns'" class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
-                <input type="text" x-model="patternSearch" placeholder="SEARCH_DB..." class="w-full bg-black border border-cyber-border text-xs p-2 mb-2 text-cyber-primary outline-none focus:border-cyber-primary placeholder:text-gray-800">
-                <div class="flex justify-between px-1 mb-2 text-[9px] text-gray-500 font-bold uppercase">
-                    <span x-text="patterns.length + ' MODULES'"></span>
-                    <button @click="selectAllPatterns" class="hover:text-cyber-primary">[ALL]</button>
-                </div>
-                <template x-for="pat in filteredPatterns" :key="pat">
-                    <button @click="togglePattern(pat)" class="w-full text-left px-3 py-2 text-xs flex justify-between group hover:bg-cyber-dim" :class="selectedPatterns.includes(pat) ? 'text-cyber-primary bg-cyber-dim/50' : 'text-gray-400'">
-                        <span x-text="pat"></span>
-                        <span x-show="selectedPatterns.includes(pat)" class="text-[10px]">[X]</span>
-                    </button>
-                </template>
-            </div>
-
-            <!-- Tools -->
-            <div x-show="sideTab === 'tools'" class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-2">
-                <template x-for="t in tools" :key="t.id">
-                    <div class="p-3 border border-cyber-border bg-black hover:border-cyber-primary transition-colors group cursor-default">
-                        <div class="flex justify-between items-start mb-1">
-                            <span class="text-xs font-bold text-cyber-primary group-hover:glow-text" x-text="t.name"></span>
-                            <span class="text-[9px] text-gray-600 font-bold" x-text="t.id"></span>
+                <div class="flex-1 overflow-y-auto custom-scrollbar space-y-1">
+                    <template x-for="pat in filteredPatterns" :key="pat">
+                        <div class="flex items-center group rounded px-2 hover:bg-slate-800 transition-colors" :class="selectedPatterns.includes(pat) ? 'bg-primary/5' : ''">
+                            <button @click="togglePattern(pat)" class="flex-1 text-left py-2 text-xs font-mono truncate" :class="selectedPatterns.includes(pat) ? 'text-primary font-bold' : 'text-slate-400'" x-text="pat"></button>
+                            <div class="hidden group-hover:flex items-center gap-2">
+                                <button @click="editPattern(pat)" class="text-slate-500 hover:text-white"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" stroke-width="2"></path></svg></button>
+                                <button @click="deletePattern(pat)" class="text-slate-500 hover:text-accent-error"><svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" stroke-width="2"></path></svg></button>
+                            </div>
                         </div>
-                        <p class="text-[9px] text-gray-500 mb-2 leading-tight" x-text="t.description"></p>
-                        <code class="block text-[8px] text-gray-400 bg-gray-900/50 p-1 font-mono truncate" x-text="t.command"></code>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Tools Section -->
+            <div x-show="sideTab === 'tools'" class="flex-1 flex flex-col p-4 overflow-hidden">
+                <button @click="editTool(null)" class="w-full py-2.5 mb-4 bg-primary rounded text-black text-[10px] font-black uppercase tracking-widest hover:opacity-90 transition-opacity">Deploy_Directive</button>
+                <div class="flex-1 overflow-y-auto custom-scrollbar space-y-3">
+                    <template x-for="t in tools" :key="t.id">
+                        <div class="p-3 bg-slate-900/50 rounded-lg border border-slate-800 hover:border-primary/30 transition-all group relative">
+                            <div class="absolute top-2 right-2 hidden group-hover:flex gap-2">
+                                <button @click="editTool(t)" class="text-slate-500 hover:text-white"><svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" stroke-width="2"></path></svg></button>
+                            </div>
+                            <h4 class="text-[11px] font-black text-white uppercase tracking-tight" x-text="t.name"></h4>
+                            <p class="text-[9px] text-slate-500 mb-2 leading-snug" x-text="t.description"></p>
+                            <code class="block text-[8px] text-primary/70 font-mono truncate" x-text="t.command"></code>
+                        </div>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Pruning/Filters Section -->
+            <div x-show="sideTab === 'filters'" class="flex-1 p-6 space-y-8 overflow-y-auto custom-scrollbar">
+                <div class="space-y-3">
+                    <label class="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Live_Regex_Filter</label>
+                    <input type="text" x-model="filters.regex" placeholder="e.g. ^(http|https)..." class="w-full bg-slate-950 border border-slate-700 text-[11px] p-3 rounded outline-none focus:border-primary text-white font-mono">
+                </div>
+                <div class="space-y-3">
+                    <label class="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Entropy_Threshold</label>
+                    <input type="range" x-model="filters.minEntropy" min="0" max="8" step="0.1" class="w-full accent-primary h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer">
+                    <div class="flex justify-between text-[10px] font-mono text-primary font-bold">
+                        <span>SHANNON_MIN</span>
+                        <span x-text="filters.minEntropy"></span>
                     </div>
-                </template>
+                </div>
+                <div class="space-y-3">
+                    <label class="text-[10px] font-black text-slate-500 uppercase tracking-[0.2em]">Exclusion_List</label>
+                    <textarea x-model="filters.ext" placeholder=".jpg, .png, .css" class="w-full bg-slate-950 border border-slate-700 text-[11px] p-3 rounded outline-none focus:border-primary text-white font-mono h-24"></textarea>
+                </div>
+                <button @click="filters = { regex: '', minEntropy: 0, ext: '' }; addToast('FILTERS_PURGED')" class="w-full py-2 border border-slate-700 rounded text-[10px] font-bold text-slate-500 uppercase hover:text-white hover:border-slate-500 transition-all">Reset_All_Pruning</button>
             </div>
 
-            <!-- History -->
-            <div x-show="sideTab === 'history'" class="flex-1 overflow-y-auto custom-scrollbar p-2 space-y-1">
+            <!-- Archive/History Section -->
+            <div x-show="sideTab === 'history'" class="flex-1 overflow-y-auto custom-scrollbar p-2">
                 <template x-for="file in history" :key="file">
-                    <button @click="loadHistory(file)" class="w-full text-left p-3 text-xs font-mono border border-transparent hover:border-cyber-primary hover:bg-cyber-dim transition-all text-gray-400 hover:text-white truncate" :class="loadedFile === file ? 'border-cyber-primary text-cyber-primary' : ''">
-                        <span x-text="file"></span>
+                    <button @click="loadHistory(file)" class="w-full text-left p-3 rounded-lg text-[11px] font-mono hover:bg-slate-800 transition-all flex items-center gap-3" :class="loadedFile === file ? 'bg-primary/10 text-primary border border-primary/20' : 'text-slate-400 border border-transparent'">
+                        <div class="w-1.5 h-1.5 rounded-full" :class="loadedFile === file ? 'bg-primary' : 'bg-slate-700'"></div>
+                        <span x-text="file" class="truncate"></span>
                     </button>
                 </template>
             </div>
-        </aside>
+        </div>
 
-        <!-- Main Content -->
-        <main class="flex-1 flex flex-col bg-[#050505] relative">
-            <!-- Data HUD -->
-            <div class="h-12 border-b border-cyber-border bg-cyber-dark flex items-center px-4 justify-between">
-                <div class="flex gap-2 overflow-x-auto custom-scrollbar max-w-2xl no-scrollbar">
-                    <button @click="switchTab('all')" class="px-4 py-1 text-[10px] font-bold uppercase border border-transparent hover:border-cyber-primary transition-all flex items-center gap-2" :class="activeTab === 'all' ? 'bg-cyber-primary text-black border-cyber-primary' : 'text-gray-500 bg-black border-cyber-border'">
-                        <span>GLOBAL_FEED</span>
-                        <span class="bg-black/20 px-1.5 rounded text-[9px]" x-text="results.length"></span>
-                    </button>
-                    <button @click="switchTab('intel')" class="px-4 py-1 text-[10px] font-bold uppercase border border-transparent hover:border-cyber-primary transition-all flex items-center gap-2" :class="activeTab === 'intel' ? 'bg-cyber-alert text-white border-cyber-alert' : 'text-gray-500 bg-black border-cyber-border'">
-                        <span>INTEL_HITS</span>
-                        <span class="bg-black/20 px-1.5 rounded text-[9px]" x-text="intelCount"></span>
-                    </button>
-                    <div class="w-px h-6 bg-cyber-border mx-2"></div>
+        <div class="p-4 border-t border-dark-border bg-slate-900/30">
+            <button @click="sideTab = 'info'" class="w-full py-2 rounded border border-slate-700 text-[10px] font-black uppercase text-slate-500 hover:text-white hover:border-slate-500 transition-all">ZetGrep_Docs</button>
+        </div>
+    </aside>
+
+    <!-- Main Command Center -->
+    <main class="flex-1 flex flex-col min-w-0 bg-dark-base relative overflow-hidden">
+        
+        <!-- Header -->
+        <header class="h-16 flex-shrink-0 bg-dark-surface border-b border-dark-border flex items-center px-4 md:px-8 gap-4 z-40 relative">
+            <button @click="mobileMenuOpen = true" class="lg:hidden p-2 text-slate-400 hover:text-white"><svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" stroke-width="2"></path></svg></button>
+            
+            <!-- Path Input with Suggestions -->
+            <div class="flex-1 flex items-center gap-4 relative" x-data="{ suggestions: [], showSugg: false }">
+                <div class="flex-1 relative glass-panel h-10 flex items-center rounded-md overflow-hidden ring-1 ring-white/5">
+                    <span class="pl-4 text-primary font-mono text-[10px] font-bold opacity-50 uppercase tracking-widest hidden sm:inline">Path:</span>
+                    <input type="text" x-model="targetPath" 
+                           @input.debounce.100ms="const r = await fetch('/api/ls?path=' + targetPath); suggestions = await r.json(); showSugg = suggestions.length > 0"
+                           @keydown.enter="runScan" @keydown.escape="showSugg = false" @click.away="showSugg = false"
+                           class="flex-1 bg-transparent border-none outline-none text-sm font-mono text-white px-4 placeholder:text-slate-700" placeholder="/path/to/dumps">
+                    
+                    <!-- Suggestions -->
+                    <div x-show="showSugg" x-cloak class="absolute top-full left-0 right-0 glass-panel mt-1 z-50 rounded-lg overflow-hidden shadow-2xl max-h-64 overflow-y-auto custom-scrollbar">
+                        <template x-for="s in suggestions" :key="s">
+                            <button @click="targetPath = s; showSugg = false" class="w-full text-left px-4 py-2.5 text-[11px] font-mono text-slate-400 hover:bg-primary/10 hover:text-primary transition-all border-b border-slate-800/50" x-text="s"></button>
+                        </template>
+                    </div>
+                </div>
+
+                <button @click="runScan" 
+                        class="h-10 px-4 md:px-8 rounded font-black text-[10px] uppercase tracking-widest transition-all shadow-lg flex items-center gap-2"
+                        :class="scanning ? 'bg-accent-error text-white animate-pulse' : 'bg-primary text-black hover:scale-[1.02]'">
+                    <span x-text="scanning ? 'ABORT' : 'EXECUTE'"></span>
+                </button>
+            </div>
+
+            <!-- Theme & Analytics -->
+            <div class="hidden md:flex items-center gap-3">
+                <div class="flex p-1 bg-slate-900 rounded-lg border border-slate-800">
+                    <button @click="setTheme('matrix')" class="w-5 h-5 bg-[#10b981] rounded-sm m-0.5" title="MATRIX"></button>
+                    <button @click="setTheme('cyber')" class="w-5 h-5 bg-[#FF00FF] rounded-sm m-0.5" title="CYBER"></button>
+                    <button @click="setTheme('titan')" class="w-5 h-5 bg-[#00FFFF] rounded-sm m-0.5" title="TITAN"></button>
+                    <button @click="setTheme('stealth')" class="w-5 h-5 bg-[#E0E0E0] rounded-sm m-0.5" title="STEALTH"></button>
+                </div>
+                <button @click="toggleAnalytics" class="h-10 w-10 flex items-center justify-center glass-panel rounded-lg hover:border-primary/50 transition-all" :class="showAnalytics ? 'text-primary border-primary/50' : 'text-slate-500'"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" stroke-width="2"></path></svg></button>
+            </div>
+        </header>
+
+        <!-- Dynamic Statistics -->
+        <section class="grid grid-cols-2 md:grid-cols-4 border-b border-dark-border bg-slate-900/20">
+            <div class="p-4 border-r border-dark-border">
+                <span class="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Inbound_Feed</span>
+                <span class="text-xl font-black font-mono text-white" x-text="results.length">0</span>
+            </div>
+            <div class="p-4 border-r border-dark-border">
+                <span class="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Intel_Hits</span>
+                <span class="text-xl font-black font-mono text-primary" x-text="intelCount">0</span>
+            </div>
+            <div class="p-4 border-r border-dark-border">
+                <span class="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Unique_Sources</span>
+                <span class="text-xl font-black font-mono text-accent-warn" x-text="uniqueTargets">0</span>
+            </div>
+            <div class="p-4">
+                <span class="block text-[8px] font-black text-slate-500 uppercase tracking-widest mb-1">Mem_Alloc</span>
+                <span class="text-xl font-black font-mono text-slate-400" x-text="stats.ram + 'MB'">0MB</span>
+            </div>
+        </section>
+
+        <!-- Main Workspace Area -->
+        <div class="flex-1 relative overflow-hidden flex flex-col">
+            <!-- Analytics Panel -->
+            <div x-show="showAnalytics" x-transition x-cloak class="absolute inset-x-0 top-0 h-72 glass-panel z-40 p-6 flex flex-col md:flex-row gap-8 shadow-2xl overflow-hidden">
+                <div class="flex-1 flex flex-col h-full min-h-0">
+                    <span class="text-[9px] font-black text-slate-500 uppercase tracking-[0.3em] mb-4 flex items-center gap-2"><div class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></div> Unit_Distribution</span>
+                    <div class="flex-1 relative min-h-0">
+                        <canvas id="patternChart"></canvas>
+                    </div>
+                </div>
+                <div class="w-full md:w-72 flex flex-col justify-center gap-6 border-t md:border-t-0 md:border-l border-slate-800 pt-6 md:pt-0 md:pl-8">
+                    <div class="space-y-1">
+                        <div class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Mean_Entropy</div>
+                        <div class="text-3xl font-black text-white font-mono" x-text="avgEntropy">0.000</div>
+                    </div>
+                    <div class="space-y-1">
+                        <div class="text-[9px] text-slate-500 font-bold uppercase tracking-widest">Augmentation_Rate</div>
+                        <div class="text-3xl font-black text-primary font-mono" x-text="intelPercentage + '%'">0%</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- View HUD -->
+            <div class="h-12 border-b border-dark-border bg-slate-900/40 flex items-center px-6 justify-between gap-4">
+                <div class="flex items-center gap-1.5 overflow-x-auto no-scrollbar scroll-smooth">
+                    <button @click="switchTab('all')" class="px-4 py-1 rounded text-[9px] font-black uppercase transition-all whitespace-nowrap" :class="activeTab === 'all' ? 'bg-primary text-black' : 'text-slate-500 hover:bg-slate-800'">Global_Feed</button>
+                    <button @click="switchTab('intel')" class="px-4 py-1 rounded text-[9px] font-black uppercase transition-all whitespace-nowrap" :class="activeTab === 'intel' ? 'bg-accent-error text-white' : 'text-slate-500 hover:bg-slate-800'">Intel_Hits</button>
+                    <div class="w-px h-4 bg-slate-800 mx-2"></div>
                     <template x-for="pat in selectedPatternsSorted" :key="pat">
-                        <button @click="switchTab(pat)" class="px-3 py-1 text-[10px] font-mono border border-cyber-border hover:text-cyber-primary hover:border-cyber-primary transition-all whitespace-nowrap" :class="activeTab === pat ? 'text-cyber-primary border-cyber-primary' : 'text-gray-500'">
-                            <span x-text="pat"></span>
-                            <span class="ml-1 text-[9px] opacity-50" x-text="resultCounts[pat] || 0"></span>
-                        </button>
+                        <button @click="switchTab(pat)" class="px-3 py-1 rounded text-[9px] font-mono transition-all whitespace-nowrap" :class="activeTab === pat ? 'bg-primary/20 text-primary ring-1 ring-primary/30' : 'text-slate-600 hover:text-slate-400'" x-text="pat"></button>
                     </template>
                 </div>
                 
-                <div class="flex items-center gap-3">
-                    <input type="text" x-model="resultFilter" placeholder="FILTER_RESULTS..." class="bg-black border border-cyber-border text-xs px-2 py-1 text-white outline-none focus:border-cyber-primary font-mono w-48">
-                    <button @click="exportResults" class="p-1.5 hover:text-cyber-primary text-gray-500"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-width="2"></path></svg></button>
+                <div class="hidden sm:flex items-center gap-4">
+                    <div class="flex items-center gap-2">
+                        <span class="text-[8px] font-black text-slate-600 uppercase">Sort:</span>
+                        <select x-model="sortBy" class="bg-transparent text-[10px] text-slate-400 outline-none cursor-pointer font-bold uppercase hover:text-primary">
+                            <option value="id" class="bg-slate-950">Sequence</option>
+                            <option value="entropy" class="bg-slate-950">Entropy</option>
+                            <option value="pattern" class="bg-slate-950">Pattern</option>
+                        </select>
+                    </div>
+                    <div class="relative">
+                        <input type="text" x-model="resultFilter" placeholder="Filter stream..." class="bg-slate-950 border border-slate-800 text-[10px] px-3 py-1 rounded-md text-white outline-none focus:border-primary w-40 placeholder:text-slate-800">
+                    </div>
+                    <button @click="exportResults" class="p-1 text-slate-600 hover:text-primary transition-colors" title="DOWNLOAD_JSON"><svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" stroke-width="2.5"></path></svg></button>
                 </div>
             </div>
 
-            <!-- Results Stream -->
-            <div class="flex-1 overflow-y-auto p-4 custom-scrollbar space-y-2 font-mono text-sm" @scroll="handleScroll" id="results-scroll">
-                <template x-for="res in visibleResults" :key="res.id">
-                    <div class="bg-black border-l-2 border-cyber-border pl-4 py-2 hover:bg-cyber-dim/20 hover:border-cyber-primary transition-colors group relative">
-                        <div class="flex justify-between items-start mb-1 opacity-70 group-hover:opacity-100">
-                            <div class="flex items-center gap-3 text-[10px] uppercase">
-                                <span class="text-cyber-primary font-bold" x-text="res.pattern"></span>
-                                <span class="text-gray-600">|</span>
-                                <span class="text-gray-400 cursor-pointer hover:text-white truncate max-w-md" @click="copyToClipboard(res.file)" x-text="res.file + ':' + res.line"></span>
-                            </div>
-                            <div class="flex items-center gap-2">
-                                <span x-show="res.entropy > 4.5" class="text-cyber-alert font-bold text-[9px]">HIGH_ENTROPY</span>
-                                
-                                <!-- Quick Actions -->
-                                <div class="relative" x-data="{ open: false }">
-                                    <button @click="open = !open" class="text-[9px] text-cyber-primary hover:glow-text font-bold">[RUN_TOOL]</button>
-                                    <div x-show="open" @click.away="open = false" class="absolute right-0 top-full mt-1 w-48 bg-cyber-dark border border-cyber-border z-50">
-                                        <template x-for="t in tools" :key="t.id">
-                                            <button @click="runTool(t.id, res); open = false" class="w-full text-left px-3 py-2 text-[10px] text-gray-400 hover:bg-cyber-primary hover:text-black uppercase" x-text="t.name"></button>
-                                        </template>
+            <!-- Selection Floating Bar -->
+            <div x-show="selectedResults.length > 0" x-transition x-cloak class="fixed bottom-10 left-1/2 -translate-x-1/2 z-50 glass-panel px-6 py-4 rounded-xl shadow-2xl flex flex-col gap-4 min-w-[320px] md:min-w-[600px] border-primary/30">
+                <div class="flex items-center justify-between gap-8">
+                    <div class="flex items-center gap-3">
+                        <div class="w-2 h-2 bg-primary animate-ping rounded-full"></div>
+                        <span class="font-black text-[11px] uppercase tracking-widest text-white"><span x-text="selectedResults.length"></span> Selected</span>
+                    </div>
+                    <div class="flex gap-2">
+                        <button @click="selectedResults = []" class="text-[10px] font-bold text-slate-500 hover:text-white uppercase">Cancel</button>
+                        <button @click="runToolSequence" 
+                                class="bg-primary text-black px-6 py-1.5 rounded-md text-[10px] font-black uppercase hover:shadow-[0_0_20px_rgba(16,185,129,0.4)] transition-all"
+                                :disabled="selectedBatchTools.length === 0">
+                            Orchestrate <span x-show="selectedBatchTools.length > 0" x-text="'(' + selectedBatchTools.length + ')'"></span>
+                        </button>
+                    </div>
+                </div>
+                <div class="flex flex-wrap gap-2 pt-3 border-t border-slate-800">
+                    <template x-for="t in tools" :key="t.id">
+                        <button @click="toggleBatchTool(t.id)" 
+                                class="px-3 py-1.5 rounded text-[9px] font-bold uppercase transition-all"
+                                :class="selectedBatchTools.includes(t.id) ? 'bg-primary text-black' : 'bg-slate-900 text-slate-500 border border-slate-800 hover:border-slate-600'">
+                            <span x-text="t.name"></span>
+                        </button>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Main Results List -->
+            <div class="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-8" @scroll="handleScroll" id="results-scroll">
+                <div class="max-w-6xl mx-auto space-y-4">
+                    <template x-for="res in sortedResults" :key="res.id">
+                        <div class="result-row bg-slate-900/30 rounded-lg p-4 md:p-6 group relative overflow-hidden ring-1 ring-white/5">
+                            <!-- Background pattern name -->
+                            <div class="absolute top-0 right-0 p-4 text-[40px] font-black text-white/[0.02] leading-none pointer-events-none select-none uppercase italic" x-text="res.pattern"></div>
+                            
+                            <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-4">
+                                <div class="flex items-center gap-4">
+                                    <input type="checkbox" @change="toggleSelect(res.id)" :checked="isSelected(res.id)" class="w-4 h-4 rounded border-slate-700 bg-slate-900 text-primary focus:ring-primary transition-all">
+                                    <div class="flex items-center gap-3">
+                                        <span class="text-[10px] font-black bg-primary/10 text-primary px-2 py-0.5 rounded uppercase" x-text="res.pattern"></span>
+                                        <span class="text-slate-600 text-xs hidden sm:inline font-mono">/</span>
+                                        <span class="text-slate-400 text-xs font-mono cursor-pointer hover:text-white truncate max-w-[200px] md:max-w-md" @click="copyToClipboard(res.file)" x-text="res.file + ':' + res.line"></span>
+                                    </div>
+                                </div>
+                                <div class="flex items-center gap-4">
+                                    <div class="flex flex-col items-end">
+                                        <span class="text-[8px] text-slate-600 uppercase font-black tracking-widest leading-none mb-1">Entropy</span>
+                                        <span class="text-xs font-bold font-mono" :class="res.entropy > 4.5 ? 'text-accent-error' : 'text-slate-500'" x-text="res.entropy.toFixed(3)"></span>
+                                    </div>
+                                    <div class="relative" x-data="{ open: false }">
+                                        <button @click="open = !open" class="text-[10px] text-primary font-black border border-primary/30 px-4 py-1 rounded hover:bg-primary/10 transition-all uppercase tracking-widest">Execute</button>
+                                        <div x-show="open" @click.away="open = false" class="absolute right-0 top-full mt-2 w-64 glass-panel z-50 rounded-xl shadow-2xl p-2 border-primary/20">
+                                            <div class="text-[8px] p-2 text-slate-500 font-black border-b border-slate-800 mb-1 uppercase tracking-widest">Unit_Directives</div>
+                                            <template x-for="t in tools" :key="t.id">
+                                                <button @click="runTool(t.id, res); open = false" class="w-full text-left px-4 py-2 text-[11px] text-slate-400 hover:bg-primary hover:text-black rounded-lg transition-all uppercase font-bold" x-text="t.name"></button>
+                                            </template>
+                                        </div>
                                     </div>
                                 </div>
                             </div>
+
+                            <!-- Content Area -->
+                            <div class="relative rounded-lg bg-black/40 border border-slate-800 p-4 font-mono text-[13px] leading-relaxed break-all group-hover:border-primary/20 transition-all text-slate-300" x-html="highlightMatch(res.content, res.matches)"></div>
+
+                            <!-- Tools Output -->
+                            <template x-if="res.tool_data && res.tool_data.length > 0">
+                                <div class="mt-4 grid grid-cols-1 gap-3 pl-4">
+                                    <template x-for="td in res.tool_data">
+                                        <div class="bg-slate-900/80 rounded-lg p-4 border border-slate-800/50 relative group/intel transition-all hover:border-primary/30">
+                                            <div class="text-[9px] text-primary mb-2 font-black uppercase tracking-[0.2em] flex items-center gap-2">
+                                                <div class="w-1.5 h-1.5 rounded-full bg-primary shadow-[0_0_8px_#10b981]"></div>
+                                                <span x-text="td.label"></span>
+                                            </div>
+                                            <div class="text-slate-300 whitespace-pre-wrap break-all text-[12px] font-mono leading-tight pl-3 border-l border-slate-800" x-text="td.value"></div>
+                                            <button @click="copyToClipboard(td.value)" class="absolute top-4 right-4 opacity-0 group-hover/intel:opacity-100 transition-opacity text-[10px] text-slate-600 hover:text-white uppercase font-bold">Copy</button>
+                                        </div>
+                                    </template>
+                                </div>
+                            </template>
                         </div>
+                    </template>
 
-                        <!-- Content -->
-                        <div class="text-gray-300 break-all leading-relaxed pl-2 border-l border-gray-800 group-hover:border-cyber-primary/30 transition-colors" x-html="highlightMatch(res.content, res.matches)"></div>
-
-                        <!-- Tool Output -->
-                        <template x-if="res.tool_data && res.tool_data.length > 0">
-                            <div class="mt-2 pl-2 space-y-1">
-                                <template x-for="td in res.tool_data">
-                                    <div class="bg-gray-900/50 p-2 border-l-2 border-cyber-primary text-xs">
-                                        <div class="text-[9px] text-cyber-primary mb-0.5 font-bold uppercase" x-text="td.label"></div>
-                                        <div class="text-gray-400 whitespace-pre-wrap" x-text="td.value"></div>
-                                    </div>
-                                </template>
-                            </div>
-                        </template>
+                    <div x-show="scanning" class="py-20 flex flex-col items-center gap-6">
+                        <div class="relative w-16 h-16">
+                            <div class="absolute inset-0 border-2 border-primary/20 rounded-full"></div>
+                            <div class="absolute inset-0 border-t-2 border-primary rounded-full animate-spin"></div>
+                        </div>
+                        <span class="text-[10px] font-black text-primary animate-pulse uppercase tracking-[0.5em]">Synchronizing_Inbound_Stream...</span>
                     </div>
-                </template>
 
-                <div x-show="visibleResults.length === 0 && !scanning" class="h-64 flex flex-col items-center justify-center opacity-30">
-                    <div class="text-4xl font-black text-cyber-primary mb-2">NO_DATA</div>
-                    <div class="text-xs uppercase tracking-widest">Waiting for input stream...</div>
+                    <div x-show="visibleResults.length === 0 && !scanning" class="h-96 flex flex-col items-center justify-center opacity-40">
+                        <svg class="w-20 h-20 mb-6 text-slate-800" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" stroke-width="1.5"></path></svg>
+                        <div class="text-xs uppercase tracking-[0.8em] font-black text-slate-700">Awaiting_Instructions</div>
+                    </div>
                 </div>
             </div>
-        </main>
-    </div>
 
-    <!-- Status Bar / Toast -->
-    <div class="fixed bottom-4 right-4 flex flex-col gap-2 z-50">
+            <!-- Kernel Log (Docked Terminal) -->
+            <div x-show="showConsole" x-cloak class="absolute bottom-0 inset-x-0 h-64 bg-slate-950/95 backdrop-blur-xl border-t border-slate-800 z-40 flex flex-col font-mono shadow-[0_-20px_50px_rgba(0,0,0,0.5)] animate-slide-up">
+                <div class="h-10 bg-slate-900 border-b border-slate-800 px-6 flex items-center justify-between">
+                    <span class="text-[10px] font-black text-primary uppercase tracking-widest">System_Kernel_Log</span>
+                    <div class="flex gap-4">
+                        <button @click="logs = []" class="text-[10px] text-slate-600 hover:text-primary uppercase font-bold">Clear</button>
+                        <button @click="showConsole = false" class="text-[10px] text-slate-600 hover:text-accent-error uppercase font-bold">Close</button>
+                    </div>
+                </div>
+                <div class="flex-1 overflow-y-auto p-6 space-y-1.5 custom-scrollbar text-[11px]">
+                    <template x-for="log in logs" :key="log.id">
+                        <div class="flex gap-6 border-b border-slate-900 pb-1">
+                            <span class="text-slate-700" x-text="log.time"></span>
+                            <span class="w-16 font-black uppercase" :class="log.type === 'error' ? 'text-accent-error' : log.type === 'success' ? 'text-primary' : 'text-slate-500'" x-text="log.type"></span>
+                            <span class="text-slate-400" x-text="log.msg"></span>
+                        </div>
+                    </template>
+                    <div x-ref="logsEnd"></div>
+                </div>
+            </div>
+        </div>
+    </main>
+
+    <!-- UI Overlay Assets -->
+    <div class="fixed bottom-8 right-8 flex flex-col gap-3 z-[100]">
         <template x-for="toast in toasts" :key="toast.id">
-            <div class="bg-cyber-dark border border-cyber-primary px-4 py-2 text-xs font-mono text-cyber-primary shadow-[0_0_10px_rgba(0,255,65,0.3)] animate-[slide-in_0.2s_ease-out] flex items-center gap-2">
-                <div class="w-2 h-2 bg-cyber-primary animate-pulse"></div>
-                <span x-text="toast.msg"></span>
+            <div class="bg-slate-900 border border-slate-800 px-6 py-4 rounded-xl shadow-2xl flex items-center gap-4 animate-slide-in-right ring-1 ring-white/10 min-w-[280px]">
+                <div class="w-2.5 h-2.5 rounded-full bg-primary shadow-[0_0_12px_#10b981]"></div>
+                <div class="flex flex-col">
+                    <span class="text-[11px] text-white font-black tracking-widest uppercase" x-text="toast.msg"></span>
+                    <span class="text-[9px] text-slate-500 uppercase font-bold">Internal_Broadcast</span>
+                </div>
             </div>
         </template>
+    </div>
+
+    <!-- Modals -->
+    <div x-show="showEditor" x-cloak class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
+        <div class="w-full max-w-2xl bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl flex flex-col font-sans overflow-hidden">
+            <div class="h-14 bg-slate-800/50 px-6 flex items-center justify-between border-b border-slate-700">
+                <h3 class="text-xs font-black text-white uppercase tracking-widest flex items-center gap-3"><div class="w-2 h-2 bg-primary rounded-full"></div> Module_Designer</h3>
+                <button @click="showEditor = false" class="text-slate-400 hover:text-white transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-width="2"></path></svg></button>
+            </div>
+            <div class="p-8 space-y-6">
+                <div class="space-y-2">
+                    <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest pl-1">Identifier</label>
+                    <input type="text" x-model="editingPattern.name" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3.5 text-sm text-white outline-none focus:border-primary transition-all font-mono">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest pl-1">Regex_Pattern</label>
+                    <textarea x-model="editingPattern.pattern" rows="5" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3.5 text-sm text-primary outline-none focus:border-primary transition-all custom-scrollbar font-mono"></textarea>
+                </div>
+                <div class="flex gap-6">
+                    <div class="flex-1 space-y-2">
+                        <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest pl-1">Flags</label>
+                        <input type="text" x-model="editingPattern.flags" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3.5 text-sm text-white outline-none focus:border-primary transition-all font-mono" placeholder="e.g. i">
+                    </div>
+                </div>
+                <div class="flex justify-end gap-4 pt-6 mt-4">
+                    <button @click="showEditor = false" class="px-6 py-3 text-xs font-black text-slate-500 uppercase hover:text-white transition-all">Cancel</button>
+                    <button @click="savePattern" class="bg-primary text-black px-10 py-3 rounded-lg text-xs font-black uppercase hover:shadow-2xl transition-all">Apply_Sync</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tool Editor Modal -->
+    <div x-show="showToolEditor" x-cloak class="fixed inset-0 z-[200] flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-md animate-fade-in">
+        <div class="w-full max-w-2xl bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl flex flex-col font-sans overflow-hidden">
+            <div class="h-14 bg-slate-800/50 px-6 flex items-center justify-between border-b border-slate-700">
+                <h3 class="text-xs font-black text-white uppercase tracking-widest flex items-center gap-3"><div class="w-2 h-2 bg-accent-warn rounded-full"></div> Directive_Config</h3>
+                <button @click="showToolEditor = false" class="text-slate-400 hover:text-white transition-colors"><svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path d="M6 18L18 6M6 6l12 12" stroke-width="2"></path></svg></button>
+            </div>
+            <div class="p-8 space-y-5 overflow-y-auto max-h-[80vh] custom-scrollbar">
+                <div class="grid grid-cols-2 gap-6">
+                    <div class="space-y-2">
+                        <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest">Directive_ID</label>
+                        <input type="text" x-model="editingTool.id" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white outline-none focus:border-primary transition-all font-mono">
+                    </div>
+                    <div class="space-y-2">
+                        <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest">Unit_Name</label>
+                        <input type="text" x-model="editingTool.name" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white outline-none focus:border-primary transition-all font-mono">
+                    </div>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest">Description</label>
+                    <input type="text" x-model="editingTool.description" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white outline-none focus:border-primary transition-all">
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest">Command_Sequence</label>
+                    <textarea x-model="editingTool.command" rows="4" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-primary outline-none focus:border-primary transition-all font-mono"></textarea>
+                </div>
+                <div class="space-y-2">
+                    <label class="text-[10px] text-slate-500 uppercase font-black tracking-widest">Result_Label</label>
+                    <input type="text" x-model="editingTool.field" class="w-full bg-slate-950 border border-slate-700 rounded-lg p-3 text-xs text-white outline-none focus:border-primary transition-all font-mono">
+                </div>
+                <div class="flex justify-end gap-4 pt-6 border-t border-slate-800">
+                    <button @click="showToolEditor = false" class="px-6 py-3 text-xs font-black text-slate-500 uppercase hover:text-white transition-all">Cancel</button>
+                    <button @click="saveTool" class="bg-primary text-black px-10 py-3 rounded-lg text-xs font-black uppercase hover:opacity-90 transition-all shadow-xl">Deploy_Changes</button>
+                </div>
+            </div>
+        </div>
     </div>
 
     <script>
         function app() {
             return {
-                version: 'v4.4.0', scanning: false, loadingFile: false, loadedFile: null, targetPath: '.', saveAs: '', smartMode: false, entropyMode: false, 
+                version: 'v0.0.2', scanning: false, loadingFile: false, loadedFile: null, targetPath: '.', saveAs: '', smartMode: false, entropyMode: false, 
                 jsonlMode: false, jsonlConfig: { target: 'body', id: 'url', decode: false },
                 sideTab: 'patterns', activeTab: 'all', selectedToolIDs: [], patterns: [], selectedPatterns: [], results: [], history: [], tools: [],
-                resultFilter: '', pageSize: 50, page: 1, batch: [], toasts: [],
-                filters: { minEntropy: 0, ext: '' },
+                resultFilter: '', patternSearch: '', pageSize: 50, page: 1, batch: [], toasts: [], logs: [], showConsole: false, sortBy: 'id',
+                selectedResults: [], selectedBatchTools: [], stats: { ram: 0, num_cpu: 0, goroutines: 0 },
+                showEditor: false, editingPattern: { name: '', pattern: '', flags: '' },
+                showToolEditor: false, editingTool: { id: '', name: '', description: '', command: '', field: '' },
+                showAnalytics: false, chart: null, currentTheme: 'matrix',
+                filters: { minEntropy: 0, ext: '', regex: '' },
+                mobileMenuOpen: false,
 
                 init() {
-                    this.fetchPatterns(); this.fetchHistory(); this.fetchTools();
-                    setInterval(() => { if (this.batch.length > 0) { this.results = [...this.results, ...this.batch]; this.batch = []; } }, 150);
+                    this.fetchPatterns(); this.fetchHistory(); this.fetchTools(); this.fetchStats();
+                    this.setTheme(localStorage.getItem('zetgrep_theme') || 'matrix');
+                    this.log("System Synchronized", "success");
+                    setInterval(() => { 
+                        if (this.batch.length > 0) { 
+                            this.results = [...this.results, ...this.batch]; this.batch = []; 
+                            if (this.showAnalytics) this.updateChart();
+                        } 
+                    }, 150);
+                    setInterval(() => this.fetchStats(), 5000);
+                },
+                log(msg, type = 'info') {
+                    const id = Date.now(); const time = new Date().toLocaleTimeString('en-GB', { hour12: false });
+                    this.logs.push({ id, msg, type, time });
+                    this.$nextTick(() => { if (this.$refs.logsEnd) this.$refs.logsEnd.scrollIntoView({ behavior: 'smooth' }); });
                 },
                 addToast(msg) { const id = Date.now(); this.toasts.push({ id, msg: msg.toUpperCase() }); setTimeout(() => this.toasts = this.toasts.filter(t => t.id !== id), 3000); },
-                async fetchPatterns() { try { const r = await fetch('/api/patterns'); this.patterns = await r.json() || []; } catch(e){} },
+                async fetchPatterns() { try { const r = await fetch('/api/patterns'); this.patterns = await r.json() || []; } catch(e){ this.log("Patterns Offline", "error"); } },
                 async fetchHistory() { try { const r = await fetch('/api/history'); this.history = await r.json() || []; } catch(e){} },
                 async fetchTools() { try { const r = await fetch('/api/tools'); this.tools = await r.json() || []; } catch(e){} },
+                async fetchStats() { try { const r = await fetch('/api/stats'); this.stats = await r.json(); } catch(e){} },
                 
+                get uniqueTargets() { return new Set(this.results.map(r => r.file)).size; },
+                get intelCount() { return this.results.filter(r => r.tool_data?.length > 0).length; },
+                get intelPercentage() { return this.results.length ? Math.round((this.intelCount / this.results.length) * 100) : 0; },
+                get avgEntropy() { if (!this.results.length) return "0.000"; const sum = this.results.reduce((acc, r) => acc + r.entropy, 0); return (sum / this.results.length).toFixed(3); },
+
                 get filteredResults() {
                     let f = this.results;
                     if (this.activeTab === 'intel') f = f.filter(r => r.tool_data?.length > 0);
                     else if (this.activeTab !== 'all') f = f.filter(r => r.pattern === this.activeTab);
-                    if (this.resultFilter) {
-                        const q = this.resultFilter.toLowerCase();
-                        f = f.filter(r => r.file.toLowerCase().includes(q) || r.content.toLowerCase().includes(q) || r.tool_data?.some(td => td.value.toLowerCase().includes(q)));
-                    }
+                    if (this.filters.minEntropy > 0) f = f.filter(r => r.entropy >= this.filters.minEntropy);
+                    if (this.filters.ext) { const exts = this.filters.ext.split(',').map(e => e.trim().toLowerCase()); f = f.filter(r => !exts.some(e => r.file.toLowerCase().endsWith(e))); }
+                    if (this.filters.regex) { try { const re = new RegExp(this.filters.regex, 'i'); f = f.filter(r => re.test(r.content)); } catch(e){} }
+                    if (this.resultFilter) { const q = this.resultFilter.toLowerCase(); f = f.filter(r => r.file.toLowerCase().includes(q) || r.content.toLowerCase().includes(q) || r.tool_data?.some(td => td.value.toLowerCase().includes(q))); }
                     return f;
                 },
 
-                get visibleResults() { return this.filteredResults.slice(0, this.page * this.pageSize); },
+                get sortedResults() {
+                    const f = [...this.filteredResults];
+                    if (this.sortBy === 'entropy') f.sort((a,b) => b.entropy - a.entropy);
+                    else if (this.sortBy === 'pattern') f.sort((a,b) => a.pattern.localeCompare(b.pattern));
+                    return f.slice(0, this.page * this.pageSize);
+                },
+
                 get hasMore() { return this.filteredResults.length > this.page * this.pageSize; },
                 get resultCounts() { return this.results.reduce((acc, r) => { acc[r.pattern] = (acc[r.pattern] || 0) + 1; return acc; }, {}); },
                 get filteredPatterns() { return this.patterns.filter(p => p.toLowerCase().includes(this.patternSearch.toLowerCase())).sort(); },
                 get selectedPatternsSorted() { return [...this.selectedPatterns].sort(); },
-                get intelCount() { return this.results.filter(r => r.tool_data?.length > 0).length; },
+
+                isSelected(id) { return this.selectedResults.includes(id); },
+                toggleSelect(id) { if (this.isSelected(id)) this.selectedResults = this.selectedResults.filter(x => x !== id); else this.selectedResults.push(id); },
+
+                async editPattern(name) { this.editingPattern = { name, pattern: '', flags: '' }; this.showEditor = true; },
+                async savePattern() {
+                    try {
+                        await fetch(`/api/patterns/save?name=${this.editingPattern.name}`, { method: 'POST', body: JSON.stringify({ pattern: this.editingPattern.pattern, flags: this.editingPattern.flags }) });
+                        this.addToast("MODULE_SYNCED"); this.fetchPatterns(); this.showEditor = false;
+                    } catch(e){ this.addToast("SYNC_FAULT"); }
+                },
+                async deletePattern(name) { if (!confirm("Purge Module?")) return; try { await fetch(`/api/patterns/delete?name=${name}`); this.addToast("MODULE_PURGED"); this.fetchPatterns(); } catch(e){} },
+
+                async editTool(t) { this.editingTool = t ? { ...t } : { id: '', name: '', description: '', command: '', field: '' }; this.showToolEditor = true; },
+                async saveTool() {
+                    try {
+                        await fetch('/api/tools/save', { method: 'POST', body: JSON.stringify(this.editingTool) });
+                        this.addToast("ENGINE_UPDATED"); this.fetchTools(); this.showToolEditor = false;
+                    } catch(e){ this.addToast("ENGINE_FAULT"); }
+                },
+                async deleteTool(id) { if (!confirm("Decommission Unit?")) return; try { await fetch(`/api/tools/delete?id=${id}`); this.addToast("UNIT_DELETED"); this.fetchTools(); } catch(e){} },
 
                 async runTool(id, res) {
+                    this.log(`Executing unit ${id} on hit ${res.id}`, "task");
                     try {
                         const r = await fetch(`/api/tools/run?id=${id}`, { method: 'POST', body: JSON.stringify(res) });
                         const d = await r.json();
@@ -315,68 +573,63 @@
                             if (!res.tool_data) res.tool_data = [];
                             res.tool_data = res.tool_data.filter(x => x.tool_id !== id);
                             res.tool_data.push(d);
-                            this.addToast(`EXECUTED: ${d.label}`);
+                            this.addToast("DECODED");
                         }
-                    } catch(e) { this.addToast("PLUGIN FAULT"); }
+                    } catch(e) { this.log(`Unit ${id} failed`, "error"); }
                 },
 
+                toggleBatchTool(id) { if (this.selectedBatchTools.includes(id)) this.selectedBatchTools = this.selectedBatchTools.filter(x => x !== id); else this.selectedBatchTools.push(id); },
+                async runToolSequence() {
+                    const tIds = [...this.selectedBatchTools]; const rIds = [...this.selectedResults];
+                    this.addToast(`CHAINING ${tIds.length} UNITS`);
+                    for (const rid of rIds) { const res = this.results.find(r => r.id === rid); if (!res) continue; for (const tid of tIds) { await this.runTool(tid, res); } }
+                    this.selectedResults = []; this.selectedBatchTools = []; this.addToast("CHAIN_COMPLETE");
+                },
+
+                setTheme(name) {
+                    this.currentTheme = name; localStorage.setItem('zetgrep_theme', name);
+                    const colors = { matrix: '#10b981', cyber: '#FF00FF', stealth: '#94a3b8', titan: '#00FFFF' };
+                    document.documentElement.style.setProperty('--primary-color', colors[name]);
+                    if (this.chart) { this.chart.data.datasets[0].backgroundColor = colors[name]; this.chart.update(); }
+                },
+
+                async runScan() {
+                    if (this.scanning) { if (this.eventSource) this.eventSource.close(); this.scanning = false; return; }
+                    if (!this.selectedPatterns.length) { this.addToast("SELECT_MODULES"); return; }
+                    this.scanning = true; this.results = []; this.batch = []; this.page = 1; this.mobileMenuOpen = false;
+                    const params = new URLSearchParams({ 
+                        path: this.targetPath, saveAs: this.saveAs, smart: this.smartMode, entropy: this.entropyMode, patterns: this.selectedPatterns.join(','), 
+                        jsonl: this.jsonlMode, jsonlTarget: this.jsonlConfig.target, jsonlId: this.jsonlConfig.id, jsonlDecode: this.jsonlConfig.decode
+                    });
+                    this.eventSource = new EventSource(`/api/scan?${params}`);
+                    this.eventSource.onmessage = (e) => { this.batch.push(JSON.parse(e.data)); };
+                    this.eventSource.addEventListener('done', () => { this.eventSource.close(); this.scanning = false; this.addToast("SCAN_COMPLETE"); this.fetchHistory(); });
+                    this.eventSource.onerror = () => { this.eventSource.close(); this.scanning = false; this.addToast("ERROR"); };
+                },
+
+                updateChart() {
+                    const ctx = document.getElementById('patternChart'); if (!ctx) return;
+                    const counts = this.resultCounts; const labels = Object.keys(counts); const data = Object.values(counts);
+                    if (this.chart) { this.chart.data.labels = labels; this.chart.data.datasets[0].data = data; this.chart.update(); }
+                    else {
+                        this.chart = new Chart(ctx, {
+                            type: 'bar',
+                            data: { labels, datasets: [{ data, backgroundColor: getComputedStyle(document.documentElement).getPropertyValue('--primary-color') }] },
+                            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, plugins: { legend: false }, scales: { x: { grid: { color: '#1e293b' } }, y: { grid: { display: false }, ticks: { color: '#94a3b8' } } } }
+                        });
+                    }
+                },
+                toggleAnalytics() { this.showAnalytics = !this.showAnalytics; if (this.showAnalytics) this.$nextTick(() => this.updateChart()); },
                 loadMore() { this.page++; },
                 handleScroll(e) { if (e.target.scrollHeight - e.target.scrollTop < e.target.clientHeight + 300 && this.hasMore) this.loadMore(); },
                 switchTab(tab) { this.activeTab = tab; this.page = 1; this.$nextTick(() => { const el = document.getElementById('results-scroll'); if (el) el.scrollTop = 0; }); },
                 togglePattern(pat) { if (this.selectedPatterns.includes(pat)) this.selectedPatterns = this.selectedPatterns.filter(p => p !== pat); else this.selectedPatterns.push(pat); },
                 selectAllPatterns() { this.selectedPatterns = [...this.patterns]; },
-                
-                runScan() {
-                    if (this.scanning) { if (this.eventSource) { this.eventSource.close(); this.eventSource = null; } this.scanning = false; return; }
-                    if (this.selectedPatterns.length === 0) { this.addToast("SELECT PATTERNS"); return; }
-                    this.scanning = true; this.results = []; this.batch = []; this.page = 1; this.loadedFile = null;
-                    const params = new URLSearchParams({ 
-                        path: this.targetPath, 
-                        saveAs: this.saveAs, 
-                        smart: this.smartMode, 
-                        entropy: this.entropyMode, 
-                        patterns: this.selectedPatterns.join(','), 
-                        tools: this.selectedToolIDs.join(','),
-                        jsonl: this.jsonlMode,
-                        jsonlTarget: this.jsonlConfig.target,
-                        jsonlId: this.jsonlConfig.id,
-                        jsonlDecode: this.jsonlConfig.decode
-                    });
-                    this.eventSource = new EventSource(`/api/scan?${params}`);
-                    this.eventSource.onmessage = (e) => { const d = JSON.parse(e.data); this.batch.push(d); };
-                    this.eventSource.addEventListener('done', () => { this.eventSource.close(); this.scanning = false; this.addToast("SCAN COMPLETE"); this.fetchHistory(); });
-                    this.eventSource.onerror = () => { this.eventSource.close(); this.scanning = false; };
-                },
-
-                async loadHistory(file) {
-                    this.loadingFile = true; this.results = []; this.batch = []; this.page = 1; this.loadedFile = file;
-                    try {
-                        const r = await fetch(`/api/history/load?file=${file}`);
-                        const d = await r.json(); this.results = d.map((x, i) => ({ ...x, id: i }));
-                        this.selectedPatterns = [...new Set(this.results.map(x => x.pattern))];
-                        this.activeTab = 'all'; this.addToast("LOG LOADED");
-                    } catch(e) { this.addToast("LOAD ERROR"); } finally { this.loadingFile = false; }
-                },
-
-                exportResults() {
-                    const data = JSON.stringify(this.results, null, 2);
-                    const blob = new Blob([data], { type: 'application/json' });
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement('a');
-                    a.href = url;
-                    a.download = `scan_export_${Date.now()}.json`;
-                    a.click();
-                    this.addToast("DATA EXPORTED");
-                },
-
-                highlightMatch(content, matches) {
-                    if (!matches || matches.length === 0) return this.escapeHtml(content);
-                    let h = this.escapeHtml(content);
-                    [...new Set(matches)].sort((a,b) => b.length - a.length).forEach(m => { h = h.replaceAll(this.escapeHtml(m), `<span class="match-highlight">${this.escapeHtml(m)}</span>`); });
-                    return h;
-                },
-                escapeHtml(str) { return str ? str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;") : ""; },
-                copyToClipboard(t) { navigator.clipboard.writeText(t); this.addToast("COPIED TO CLIPBOARD"); }
+                async loadHistory(f) { try { const r = await fetch(`/api/history/load?file=${f}`); const d = await r.json(); this.results = d.map((x, i) => ({ ...x, id: i })); this.loadedFile = f; this.activeTab = 'all'; this.addToast("ARCHIVE_LOADED"); } catch(e){} },
+                exportResults() { const data = JSON.stringify(this.results, null, 2); const blob = new Blob([data], { type: 'application/json' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `zetgrep_${Date.now()}.json`; a.click(); },
+                highlightMatch(c, m) { if (!m?.length) return this.escapeHtml(c); let h = this.escapeHtml(c); [...new Set(m)].sort((a,b) => b.length - a.length).forEach(x => { h = h.replaceAll(this.escapeHtml(x), `<span class="match-tag">${this.escapeHtml(x)}</span>`); }); return h; },
+                escapeHtml(s) { return s ? s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;") : ""; },
+                copyToClipboard(t) { navigator.clipboard.writeText(t); this.addToast("COPIED"); }
             }
         }
     </script>
