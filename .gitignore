@@ -1,6 +1,6 @@
 # Binaries
-zetgrep
-zetgrep.exe
+/zetgrep
+/zetgrep.exe
 
 # Build files
 *.o
