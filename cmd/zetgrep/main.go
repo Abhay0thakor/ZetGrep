@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const version = "v0.1.2"
+const version = "v0.1.3"
 
 var (
 	au = aurora.NewAurora(true)
@@ -37,13 +37,14 @@ func (m *multiFlag) Set(value string) error {
 
 func main() {
 	var (
-		listMode, versionMode, smartMode, entropyMode, allMode, jsonMode, configMode, updateMode bool
+		listMode, versionMode, smartMode, entropyMode, allMode, jsonMode, configMode, updateMode, reportMode bool
 		webMode, toolIDs, outputTemplate, processFile string
 		configFiles, inputConfigs, toolFiles multiFlag
 	)
 	flag.BoolVar(&listMode, "list", false, "list patterns and tools")
 	flag.BoolVar(&versionMode, "version", false, "show version")
 	flag.BoolVar(&updateMode, "update", false, "update zetgrep to the latest version")
+	flag.BoolVar(&reportMode, "report", false, "generate a markdown intelligence report")
 	flag.BoolVar(&smartMode, "smart", false, "use AI filtering")
 	flag.BoolVar(&entropyMode, "entropy", false, "filter by high entropy")
 	flag.BoolVar(&allMode, "all", false, "run all patterns")
@@ -183,7 +184,11 @@ func main() {
 
 	if jsonMode { fmt.Print("[") }
 	first := true
+	var allResults []*models.Result
 	for res := range resultChan {
+		if reportMode {
+			allResults = append(allResults, res)
+		}
 		if jsonMode {
 			if !first { fmt.Print(",") }
 			b, _ := json.Marshal(res); fmt.Print(string(b))
@@ -197,6 +202,39 @@ func main() {
 		scanner.PutResult(res)
 	}
 	if jsonMode { fmt.Println("]") }
+
+	if reportMode && len(allResults) > 0 {
+		generateReport(allResults)
+	}
+}
+
+func generateReport(results []*models.Result) {
+	filename := fmt.Sprintf("report_%d.md", os.Getpid()) // Simple unique name
+	f, err := os.Create(filename)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to create report: %v\n", err)
+		return
+	}
+	defer f.Close()
+
+	fmt.Fprintln(f, "# ZetGrep Intelligence Report")
+	fmt.Fprintf(f, "*Generated on: %s*\n\n", strings.Split(fmt.Sprintf("%v", os.Environ()), " ")[0]) // Placeholder for time for simplicity
+	fmt.Fprintf(f, "## Executive Summary\n- **Total Intel Hits**: %d\n\n", len(results))
+	
+	fmt.Fprintln(f, "## Detailed Findings")
+	for i, r := range results {
+		fmt.Fprintf(f, "### Finding %d: [%s]\n", i+1, r.Pattern)
+		fmt.Fprintf(f, "- **Source**: `%s` (Line: %d)\n", r.File, r.Line)
+		fmt.Fprintf(f, "- **Match Content**:\n```text\n%s\n```\n", r.Content)
+		if len(r.ToolData) > 0 {
+			fmt.Fprintln(f, "- **Augmented Intelligence**:")
+			for _, td := range r.ToolData {
+				fmt.Fprintf(f, "  - **%s**: `%s`\n", td.Label, td.Value)
+			}
+		}
+		fmt.Fprintln(f, "---\n")
+	}
+	fmt.Printf("\n%s Intelligence report exported to: %s\n", au.Green("[+]"), au.Bold(filename))
 }
 
 func mergeConfigs(dest *models.Config, src models.Config) {
