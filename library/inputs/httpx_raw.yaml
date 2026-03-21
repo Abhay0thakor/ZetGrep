@@ -1,0 +1,5 @@
+format: jsonl
+targets:
+  - "$" # Custom internal notation for "entire line"
+id: url
+decode: false

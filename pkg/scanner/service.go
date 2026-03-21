@@ -244,13 +244,22 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 
 				// Scan multiple targets
 				for _, targetField := range targets {
-					content, ok := getNestedField(data, targetField)
+					var content string
+					var ok bool
+					
+					if targetField == "$" {
+						content = line
+						ok = true
+					} else {
+						content, ok = getNestedField(data, targetField)
+					}
+					
 					if !ok { continue }
 
 					for _, cp := range compiledPatterns {
 						matches := cp.comp.FindAllStringSubmatch(content, -1)
 						for _, matchGroup := range matches {
-							if len(matchGroup) == 0 { continue }
+							if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
 							match := matchGroup[0]
 
 							res := GetResult()
@@ -353,7 +362,7 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 					for _, cp := range compiledPatterns {
 						matches := cp.comp.FindAllStringSubmatch(content, -1)
 						for _, matchGroup := range matches {
-							if len(matchGroup) == 0 { continue }
+							if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
 							match := matchGroup[0]
 
 							res := GetResult()

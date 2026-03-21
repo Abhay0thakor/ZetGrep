@@ -1,0 +1,5 @@
+id: extract_tech
+name: Tech Signature Extractor
+description: Extracts technological signatures from HTTPX JSONL output
+command: echo '{{match}}' | jq -r '.tech[]' 2>/dev/null || echo "None"
+field: technologies
