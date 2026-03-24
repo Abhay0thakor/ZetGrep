@@ -23,7 +23,7 @@ var resultPool = sync.Pool{
 
 func GetResult() *models.Result {
 	r := resultPool.Get().(*models.Result)
-	*r = models.Result{} // Reset
+	r.Reset()
 	return r
 }
 
@@ -31,8 +31,6 @@ func PutResult(r *models.Result) {
 	if r == nil {
 		return
 	}
-	r.ToolData = nil
-	r.Matches = nil
 	resultPool.Put(r)
 }
 

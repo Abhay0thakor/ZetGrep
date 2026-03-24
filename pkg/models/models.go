@@ -29,6 +29,18 @@ type Result struct {
 	ToolData []ToolOutput `json:"tool_data,omitempty"`
 }
 
+func (r *Result) Reset() {
+	r.ID = 0
+	r.Pattern = ""
+	r.File = ""
+	r.Ext = ""
+	r.Line = 0
+	r.Content = ""
+	r.Matches = r.Matches[:0]
+	r.Entropy = 0
+	r.ToolData = r.ToolData[:0]
+}
+
 type Tool struct {
 	ID          string   `yaml:"id" json:"id"`
 	Name        string   `yaml:"name" json:"name"`

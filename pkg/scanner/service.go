@@ -191,7 +191,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 }
 
 func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
-	resultChan := make(chan *models.Result, 5000)
+	resultChan := make(chan *models.Result, 1000)
 
 	var compiledPatterns []struct {
 		p    models.Pattern
@@ -220,7 +220,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 	idField := s.Config.Input.ID
 	filters := s.Config.Input.Filters
 
-	lineChan := make(chan string, 5000)
+	lineChan := make(chan string, 1000)
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() * 2
 
@@ -327,7 +327,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 }
 
 func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
-	resultChan := make(chan *models.Result, 5000)
+	resultChan := make(chan *models.Result, 1000)
 
 	var compiledPatterns []struct {
 		p    models.Pattern
@@ -354,7 +354,7 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 	targetIdxs := s.Config.Input.CSVConfig.TargetIdx
 	if len(targetIdxs) == 0 { targetIdxs = []int{0} }
 
-	recordChan := make(chan []string, 5000)
+	recordChan := make(chan []string, 1000)
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() * 2
 
