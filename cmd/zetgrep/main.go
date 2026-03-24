@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	version = "v0.1.7"
+	version = "v0.1.8"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -66,6 +66,7 @@ func main() {
 		smartMode   bool
 		entropyMode bool
 		diagnose    string
+		tags        multiFlag
 
 		// Output
 		jsonMode       bool
@@ -79,9 +80,11 @@ func main() {
 		webMode     string
 		toolIDs     string
 		processFile string
+		resumeFile  string
 		updateMode  bool
 		versionMode bool
 		listObjects bool
+		healthCheck bool
 	)
 
 	// Define Flags
@@ -98,6 +101,7 @@ func main() {
 	flag.BoolVar(&smartMode, "smart", false, "use AI-based interest filtering")
 	flag.BoolVar(&entropyMode, "entropy", false, "filter by high-entropy content")
 	flag.StringVar(&diagnose, "diagnose", "", "diagnose a single line against current config")
+	flag.Var(&tags, "tags", "filter patterns by tag (comma-separated)")
 
 	flag.BoolVar(&jsonMode, "json", false, "output in JSON format")
 	flag.BoolVar(&reportMode, "report", false, "generate markdown intelligence report")
@@ -107,17 +111,47 @@ func main() {
 	flag.BoolVar(&noColor, "no-color", false, "disable colorized output")
 
 	flag.StringVar(&webMode, "web", "", "start web dashboard (e.g. :8080)")
-	flag.StringVar(&toolIDs, "tools", "", "comma-separated tool IDs to execute")
+	flag.StringVar(&toolIDs, "w", "", "comma-separated tool IDs (workflow) to execute")
+	flag.StringVar(&toolIDs, "workflow", "", "comma-separated tool IDs (workflow) to execute") // Alias
 	flag.StringVar(&processFile, "process", "", "path to previous results.json to re-process")
+	flag.StringVar(&resumeFile, "resume", "", "resume scan from state file (e.g. resume.cfg)")
 	flag.BoolVar(&updateMode, "update", false, "update zetgrep to the latest version")
 	flag.BoolVar(&versionMode, "version", false, "show version")
 	flag.BoolVar(&listObjects, "list", false, "list all available patterns and tools")
+	flag.BoolVar(&healthCheck, "health-check", false, "run diagnostic self-check")
 
 	flag.Usage = func() {
 		showBanner()
 		fmt.Fprintf(os.Stderr, "Usage: zetgrep [flags] [pattern] [targets...]\n\n")
-		fmt.Fprintf(os.Stderr, "INPUT:\n")
-		flag.PrintDefaults()
+		
+		groups := map[string][]string{
+			"INPUT": {"input-config", "l", "stdin"},
+			"CONFIG": {"config-file", "tool", "pd", "td"},
+			"FILTER": {"all", "smart", "entropy", "diagnose", "tags"},
+			"OUTPUT": {"json", "report", "o", "silent", "verbose", "no-color"},
+			"LOGIC": {"web", "w", "workflow", "process", "resume", "update", "version", "list", "health-check"},
+		}
+
+		// Helper to print flags
+		printGroup := func(name string) {
+			fmt.Fprintf(os.Stderr, "%s:\n", name)
+			for _, fname := range groups[name] {
+				f := flag.Lookup(fname)
+				if f == nil { continue }
+				s := fmt.Sprintf("   -%s", f.Name)
+				if len(s) <= 4 { s += "\t" } else { s += " " }
+				s += fmt.Sprintf(" %s", f.Usage)
+				if f.DefValue != "false" && f.DefValue != "" { s += fmt.Sprintf(" (default %s)", f.DefValue) }
+				fmt.Fprintf(os.Stderr, "%-40s\n", s)
+			}
+			fmt.Fprintln(os.Stderr)
+		}
+
+		printGroup("INPUT")
+		printGroup("CONFIG")
+		printGroup("FILTER")
+		printGroup("OUTPUT")
+		printGroup("LOGIC")
 	}
 	flag.Parse()
 
@@ -164,6 +198,7 @@ func main() {
 		if len(inc.Targets) > 0 { finalCfg.Input.Targets = inc.Targets }
 		if inc.ID != "" { finalCfg.Input.ID = inc.ID }
 		if len(inc.Filters) > 0 { finalCfg.Input.Filters = inc.Filters }
+		if inc.CSVConfig.Separator != "" { finalCfg.Input.CSVConfig = inc.CSVConfig }
 		finalCfg.Input.Decode = finalCfg.Input.Decode || inc.Decode
 	}
 
@@ -186,10 +221,28 @@ func main() {
 		return
 	}
 
+	if healthCheck {
+		fmt.Printf("%s Running health check...\n", au.Bold(au.Cyan("[*]")))
+		fmt.Printf("Patterns Directory: %s\n", svc.Config.PatternsDir)
+		if _, err := os.Stat(svc.Config.PatternsDir); err == nil { fmt.Printf("%s Directory exists\n", au.Green("[+]")) } else { fmt.Printf("%s Directory NOT FOUND\n", au.Red("[-]")) }
+		fmt.Printf("Tools Directory: %s\n", svc.Config.ToolsDir)
+		if _, err := os.Stat(svc.Config.ToolsDir); err == nil { fmt.Printf("%s Directory exists\n", au.Green("[+]")) } else { fmt.Printf("%s Directory NOT FOUND\n", au.Red("[-]")) }
+		return
+	}
+
 	if webMode != "" {
 		srv := api.NewServer(webMode, svc)
 		srv.Start()
 		return
+	}
+
+	// Resume Logic
+	if resumeFile != "" {
+		if err := svc.LoadResumeState(resumeFile); err == nil {
+			if !silent { fmt.Printf("%s Resuming scan from file %d, line %d\n", au.Cyan("[*]"), svc.Resume.FileIndex, svc.Resume.LineIndex) }
+		} else {
+			if !silent { fmt.Printf("%s Starting new scan session: %s\n", au.Cyan("[*]"), resumeFile) }
+		}
 	}
 
 	if diagnose != "" {
@@ -219,6 +272,8 @@ func main() {
 	var runPats []string
 	if allMode {
 		runPats, _ = scanner.GetPatterns()
+	} else if len(tags) > 0 {
+		runPats = svc.FilterPatternsByTag(tags)
 	} else if flag.NArg() > 0 {
 		runPats = []string{flag.Arg(0)}
 	}
@@ -234,9 +289,11 @@ func main() {
 		resultChan, _ = svc.RunScan(ctx, scanner.ScannerOptions{
 			TargetPaths: targets,
 			Patterns:    runPats,
+			Tags:        tags,
 			ToolIDs:     activeToolIDs,
 			SmartMode:   smartMode,
 			EntropyMode: entropyMode,
+			ResumeFile:  resumeFile,
 		})
 	}
 

@@ -57,6 +57,13 @@ type Pattern struct {
 	Pattern  string   `json:"pattern,omitempty"`
 	Patterns []string `json:"patterns,omitempty"`
 	Engine   string   `json:"engine,omitempty"`
+	Tags     []string `json:"tags,omitempty" yaml:"tags,omitempty"`
+}
+
+type ResumeConfig struct {
+	FileIndex int    `json:"file_index"`
+	LineIndex int    `json:"line_index"`
+	Target    string `json:"target"`
 }
 
 type Config struct {

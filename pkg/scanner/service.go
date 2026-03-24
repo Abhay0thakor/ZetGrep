@@ -19,27 +19,31 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
-)
+	)
 
-var au = aurora.NewAurora(true)
+	var au = aurora.NewAurora(true)
 
-type ScannerOptions struct {
+	type ScannerOptions struct {
 	TargetPaths []string
 	Patterns    []string
+	Tags        []string
 	ToolIDs     []string
 	SmartMode   bool
 	EntropyMode bool
-}
+	ResumeFile  string
+	}
 
-type ScannerService struct {
+	type ScannerService struct {
 	Engine       Engine
 	Fallback     Engine
 	Config       models.Config
 	Classifier   *classifier.Classifier
 	Tools        []models.Tool
 	patternCache sync.Map
-	processSem chan struct{}
-}
+	processSem   chan struct{}
+	Resume       models.ResumeConfig
+	}
+
 
 func NewScannerService(cfg models.Config) (*ScannerService, error) {
 	engine, err := NewRipgrepEngine()
@@ -302,7 +306,11 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 	}
 
 	go func() {
-		for _, path := range opts.TargetPaths {
+		var lineCount int
+		for i, path := range opts.TargetPaths {
+			// Skip files already processed
+			if opts.ResumeFile != "" && i < s.Resume.FileIndex { continue }
+
 			file, err := os.Open(path)
 			if err != nil { continue }
 			scanner := bufio.NewScanner(file)
@@ -310,12 +318,31 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			scanner.Buffer(buf, 20*1024*1024)
 
 			for scanner.Scan() {
+				lineCount++
+				// Skip lines already processed in current file
+				if opts.ResumeFile != "" && i == s.Resume.FileIndex && lineCount <= s.Resume.LineIndex { continue }
+
 				select {
 				case <-ctx.Done(): file.Close(); goto done
 				case lineChan <- scanner.Text():
 				}
+
+				// Periodic State Save
+				if opts.ResumeFile != "" && lineCount%5000 == 0 {
+					s.Resume.FileIndex = i
+					s.Resume.LineIndex = lineCount
+					s.Resume.Target = path
+					s.SaveResumeState(opts.ResumeFile)
+				}
 			}
 			file.Close()
+			// Reset line count for next file
+			if opts.ResumeFile != "" {
+				s.Resume.FileIndex = i + 1
+				s.Resume.LineIndex = 0
+				s.SaveResumeState(opts.ResumeFile)
+			}
+			lineCount = 0
 		}
 	done:
 		close(lineChan)
@@ -562,4 +589,30 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 	}
 
 	return logs
+}
+
+func (s *ScannerService) LoadResumeState(file string) error {
+	b, err := os.ReadFile(file)
+	if err != nil { return err }
+	return json.Unmarshal(b, &s.Resume)
+}
+
+func (s *ScannerService) SaveResumeState(file string) error {
+	b, _ := json.MarshalIndent(s.Resume, "", "  ")
+	return os.WriteFile(file, b, 0644)
+}
+
+func (s *ScannerService) FilterPatternsByTag(tags []string) []string {
+	if len(tags) == 0 { return nil }
+	var matched []string
+	pats, _ := GetPatterns()
+	for _, pName := range pats {
+		p, _ := s.getPattern(pName)
+		for _, t := range tags {
+			for _, pt := range p.Tags {
+				if t == pt { matched = append(matched, pName); break }
+			}
+		}
+	}
+	return matched
 }
