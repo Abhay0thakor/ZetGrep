@@ -226,21 +226,29 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 		go func() {
 			defer wg.Done()
 			for line := range lineChan {
+				if line == "" { continue }
+				
 				var data map[string]interface{}
-				if err := json.Unmarshal([]byte(line), &data); err != nil { continue }
-
-				// Apply Filters (e.g. status: "200")
-				matchFilters := true
-				for field, val := range filters {
-					if v, ok := getNestedField(data, field); !ok || v != val {
-						matchFilters = false
-						break
+				err := json.Unmarshal([]byte(line), &data)
+				// If parsing fails, we can still scan the raw line if "$" is a target
+				
+				// Apply Filters (only if JSON was valid)
+				if err == nil {
+					matchFilters := true
+					for field, val := range filters {
+						if v, ok := getNestedField(data, field); !ok || v != val {
+							matchFilters = false
+							break
+						}
 					}
+					if !matchFilters { continue }
 				}
-				if !matchFilters { continue }
 
-				idVal, _ := getNestedField(data, idField)
-				if idVal == "" { idVal = "unknown" }
+				idVal := "unknown"
+				if err == nil {
+					idVal, _ = getNestedField(data, idField)
+					if idVal == "" { idVal = "unknown" }
+				}
 
 				// Scan multiple targets
 				for _, targetField := range targets {
@@ -250,11 +258,11 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 					if targetField == "$" {
 						content = line
 						ok = true
-					} else {
+					} else if err == nil {
 						content, ok = getNestedField(data, targetField)
 					}
 					
-					if !ok { continue }
+					if !ok || content == "" { continue }
 
 					for _, cp := range compiledPatterns {
 						matches := cp.comp.FindAllStringSubmatch(content, -1)

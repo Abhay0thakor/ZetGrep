@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const version = "v0.1.3"
+const version = "v0.1.4"
 
 var (
 	au = aurora.NewAurora(true)
@@ -78,6 +78,14 @@ func main() {
 	}
 
 	// Merge multiple global configs
+	if len(configFiles) == 0 {
+		home, _ := os.UserHomeDir()
+		defaultConfig := filepath.Join(home, ".config", "gf", "config.yaml")
+		if _, err := os.Stat(defaultConfig); err == nil {
+			configFiles = append(configFiles, defaultConfig)
+		}
+	}
+
 	var finalCfg models.Config
 	for _, cf := range configFiles {
 		var cfg models.Config
