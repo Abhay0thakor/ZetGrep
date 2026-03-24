@@ -17,7 +17,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-const version = "v0.1.4"
+const version = "v0.1.5"
 
 var (
 	au = aurora.NewAurora(true)
@@ -38,7 +38,7 @@ func (m *multiFlag) Set(value string) error {
 func main() {
 	var (
 		listMode, versionMode, smartMode, entropyMode, allMode, jsonMode, configMode, updateMode, reportMode bool
-		webMode, toolIDs, outputTemplate, processFile string
+		webMode, toolIDs, outputTemplate, processFile, diagnoseLine string
 		configFiles, inputConfigs, toolFiles multiFlag
 	)
 	flag.BoolVar(&listMode, "list", false, "list patterns and tools")
@@ -57,6 +57,7 @@ func main() {
 	flag.Var(&toolFiles, "tool", "path to individual tool YAML file (multiple allowed)")
 	flag.StringVar(&outputTemplate, "o", "", "output template (e.g. [{{pattern}}] {{file}}:{{match}})")
 	flag.StringVar(&processFile, "process", "", "path to results.json to re-process")
+	flag.StringVar(&diagnoseLine, "diagnose", "", "test a single line of data against the current config")
 	flag.Parse()
 
 	if updateMode {
@@ -112,7 +113,10 @@ func main() {
 		yaml.Unmarshal(b, &inc)
 		if inc.Format != "" { finalCfg.Input.Format = inc.Format }
 		if inc.Target != "" { finalCfg.Input.Target = inc.Target }
+		if len(inc.Targets) > 0 { finalCfg.Input.Targets = inc.Targets }
 		if inc.ID != "" { finalCfg.Input.ID = inc.ID }
+		if len(inc.Filters) > 0 { finalCfg.Input.Filters = inc.Filters }
+		if inc.CSVConfig.Separator != "" { finalCfg.Input.CSVConfig = inc.CSVConfig }
 		finalCfg.Input.Decode = finalCfg.Input.Decode || inc.Decode
 	}
 
@@ -138,6 +142,22 @@ func main() {
 		srv := api.NewServer(webMode, svc)
 		if err := srv.Start(); err != nil {
 			os.Exit(1)
+		}
+		return
+	}
+
+	if diagnoseLine != "" {
+		fmt.Printf("%s Starting deep diagnostic...\n\n", au.Bold(au.Magenta("[DIAGNOSE]")))
+		var patterns []string
+		if allMode {
+			patterns, _ = scanner.GetPatterns()
+		} else if flag.NArg() > 0 {
+			patterns = []string{flag.Arg(0)}
+		}
+		
+		logs := svc.DiagnoseLine(diagnoseLine, patterns)
+		for _, l := range logs {
+			fmt.Println(l)
 		}
 		return
 	}

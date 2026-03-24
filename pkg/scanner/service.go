@@ -14,11 +14,14 @@ import (
 	"encoding/csv"
 	"io"
 
+	"github.com/logrusorgru/aurora"
 	pdregexp "github.com/projectdiscovery/utils/regexp"
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 )
+
+var au = aurora.NewAurora(true)
 
 type ScannerOptions struct {
 	TargetPaths []string
@@ -475,4 +478,88 @@ func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string,
 	}()
 
 	return resultChan, nil
+}
+
+func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
+	var logs []string
+	logs = append(logs, fmt.Sprintf("%s Testing input line: %s", au.Bold(au.Cyan("[DEBUG]")), line))
+
+	if line == "" {
+		logs = append(logs, fmt.Sprintf("%s Line is empty", au.Red("[ERROR]")))
+		return logs
+	}
+
+	var data map[string]interface{}
+	err := json.Unmarshal([]byte(line), &data)
+	if err != nil {
+		logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
+	} else {
+		logs = append(logs, fmt.Sprintf("%s JSON parsed successfully", au.Green("[SUCCESS]")))
+	}
+
+	// Filter Check
+	if err == nil {
+		for field, val := range s.Config.Input.Filters {
+			v, ok := getNestedField(data, field)
+			if !ok {
+				logs = append(logs, fmt.Sprintf("%s Field '%s' missing. %s", au.Yellow("[FILTER]"), field, au.Red("SKIP.")))
+				return logs
+			}
+			if v != val {
+				logs = append(logs, fmt.Sprintf("%s Field '%s' value '%s' != '%s'. %s", au.Yellow("[FILTER]"), field, v, val, au.Red("SKIP.")))
+				return logs
+			}
+			logs = append(logs, fmt.Sprintf("%s Field '%s' matches '%s'. %s", au.Yellow("[FILTER]"), field, val, au.Green("PASS.")))
+		}
+	}
+
+	// Target Check
+	var targets []string
+	if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
+	targets = append(targets, s.Config.Input.Targets...)
+
+	if len(targets) == 0 {
+		logs = append(logs, fmt.Sprintf("%s No targets defined in config!", au.Red("[ERROR]")))
+		return logs
+	}
+
+	for _, targetField := range targets {
+		var content string
+		var ok bool
+		if targetField == "$" {
+			content = line
+			ok = true
+			logs = append(logs, fmt.Sprintf("%s Using special target '$' (Raw Line)", au.Blue("[TARGET]")))
+		} else if err == nil {
+			content, ok = getNestedField(data, targetField)
+			if ok {
+				logs = append(logs, fmt.Sprintf("%s Found field '%s'. Content: %s", au.Blue("[TARGET]"), targetField, content))
+			} else {
+				logs = append(logs, fmt.Sprintf("%s Field '%s' NOT FOUND in JSON", au.Yellow("[TARGET]"), targetField))
+			}
+		}
+
+		if ok && content != "" {
+			for _, pName := range patterns {
+				if pName == "" { continue }
+				p, perr := s.getPattern(pName)
+				if perr != nil {
+					logs = append(logs, fmt.Sprintf("%s Pattern '%s' load failed: %v", au.Red("[PATTERN]"), pName, perr))
+					continue
+				}
+				re, rerr := regexp.Compile(p.Pattern)
+				if rerr != nil {
+					logs = append(logs, fmt.Sprintf("%s Pattern '%s' invalid regex: %v", au.Red("[PATTERN]"), pName, rerr))
+					continue
+				}
+				if matches := re.FindAllStringSubmatch(content, -1); len(matches) > 0 {
+					logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in '%s'", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), targetField))
+				} else {
+					logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s in '%s'", au.Yellow("[MISSED]"), pName, au.Red("did not match"), targetField))
+				}
+			}
+		}
+	}
+
+	return logs
 }
