@@ -1,45 +1,87 @@
 # <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.1.8)
 
-A high-performance pattern matching and orchestration wrapper designed for security auditors, bug hunters, and data engineers. 
+A professional-grade pattern matching and orchestration engine designed for security auditors, bug hunters, and data engineers. 
 
-`ZetGrep` simplifies the use of complex regex patterns and allows you to pipe matches into custom tools for automated analysis. It is optimized for both standard file systems and massive (100GB+) JSONL datasets.
+`ZetGrep` simplifies complex regex analysis and allows you to pipe matches into custom tool workflows. It is optimized for both standard file systems and massive (100GB+) JSONL/CSV datasets with stateful resume capabilities.
 
-## ✨ Key Features
-- **🚀 Turbo JSONL Engine**: Stream massive datasets with multi-core concurrency and low memory overhead.
-- **🛠️ Plugin Orchestration**: Pipe regex matches directly into external commands (whois, nmap, decoders).
-- **💎 Max Power Templating**: Full control over output format with custom variables.
-- **📦 Multi-Config Support**: Merge multiple YAML/JSON configurations on the fly.
-- **⚡ Engine Auto-Detection**: Uses `ripgrep` (rg) if available, falling back to optimized Go regex or `grep`.
-- **🖥️ Intelligence Dashboard**: Built-in Web UI for real-time visualization of findings.
-- **🔄 Self-Update**: Keep your tool current with a single command.
+---
 
-## 📥 Installation
+## 🚀 Key Features
+- **ProjectDiscovery-Style CLI**: Categorized, intuitive, and highly configurable.
+- **Stateful Resume**: Pause and resume long-running scans without losing progress.
+- **Multi-Format Streaming**: Native high-speed support for JSONL, JSON, and CSV.
+- **Advanced Orchestration**: Chain multiple tools together (e.g., `base64_decode` -> `whois`).
+- **Tag-Based Filtering**: Run groups of patterns using tags (e.g., `-tags secrets,cloud`).
+- **Modern Web Dashboard**: Real-time analytics, metrics, and an integrated code editor.
+
+---
+
+## 🛠️ Installation
 
 ```bash
 go install github.com/Abhay0thakor/ZetGrep/cmd/zetgrep@latest
 ```
 
-### 🔄 Updating
-To update `ZetGrep` to the latest version:
+---
+
+## 📖 Usage
+
+### Quick Start
 ```bash
-zetgrep -update
+# Scan a directory for all patterns
+zetgrep -all ./recon_data
+
+# Scan a JSONL file using a specific input config
+zetgrep -input-config inputs/httpx.yaml -all httpx_output.jsonl
+
+# Resume a paused scan
+zetgrep -resume resume.cfg -all ./massive_dump
 ```
 
-## 📖 Documentation
-Detailed guides for every feature:
-
-1.  [**Basic Usage**](docs/USAGE.md) - Flags, filtering, and patterns.
-2.  [**Advanced Configuration**](docs/ADVANCED.md) - JSONL streaming, templating, and "Max Power" features.
-3.  [**Custom Plugins**](docs/PLUGINS.md) - How to build your own tools.
-4.  [**AI Master Prompt**](docs/AI_MASTER_PROMPT.md) - 🧠 **Copy-paste this to make any AI a ZetGrep Expert.**
-5.  [**Test Prompts**](docs/TEST_PROMPTS.md) - 🧪 **Challenge AI to build complex ZetGrep workflows.**
-6.  [**Real-World Examples**](docs/EXAMPLES.md) - Scenarios and safe sample data.
-
-## 🏁 Quick Start
-Scan for IP addresses in a JSONL file and format the output:
+### Advanced Examples
 ```bash
-./zetgrep -input-config httpx.yaml -o "IP FOUND: {{match}} [{{file}}]" ip targets.jsonl
+# Filter patterns by tags
+zetgrep -tags secrets,cve -l targets.txt
+
+# Chain tools and output using a template
+zetgrep -all -w ip_info,whois -o "[{{file}}] {{tool:ip_info}} -> {{tool:whois}}" data.jsonl
 ```
 
-## 📜 Acknowledgements
-Original concept by [tomnomnom](https://github.com/tomnomnom/gf). This fork (**ZetGrep**) adds the high-performance streaming engine, plugin orchestration, self-update mechanism, and advanced templating system.
+---
+
+## 🏳️ Flags
+
+### INPUT
+- `-l, -list string`: File containing a list of targets to scan.
+- `-stdin`: Read targets from standard input.
+- `-input-config string`: Path to input configuration file (YAML).
+
+### CONFIG
+- `-config-file string`: Path to global configuration file.
+- `-pd string`: Directory containing pattern definitions.
+- `-td string`: Directory containing tool definitions.
+
+### FILTER
+- `-all`: Run all available patterns in the library.
+- `-tags string`: Filter patterns by tag (comma-separated).
+- `-smart`: Use AI-based interest filtering.
+- `-entropy`: Filter by high-entropy content.
+- `-diagnose string`: Step-by-step diagnostic for a single line.
+
+### OUTPUT
+- `-json`: Output results in JSON format.
+- `-report`: Generate a professional Markdown intelligence report.
+- `-o string`: Define a custom output template.
+- `-silent`: Display only the results (no banner/info).
+- `-nc, -no-color`: Disable colorized output.
+
+### LOGIC
+- `-web string`: Start the web-based Mission Control dashboard.
+- `-resume string`: Path to the scan state file for pausing/resuming.
+- `-w, -workflow string`: Comma-separated tool IDs to execute.
+- `-update`: Self-update ZetGrep to the latest version.
+
+---
+
+## 🛡️ License
+Distributed under the MIT License. See `LICENSE` for more information.

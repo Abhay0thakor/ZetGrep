@@ -1,0 +1,5 @@
+{
+    "flags": "-Hnri",
+    "pattern": "firebaseio.com"
+  ,"tags": ["cloud", "database"]
+}
