@@ -1,0 +1,4 @@
+# Beautify a SINGLE large JSON object (e.g. Burp history export) before scanning
+# This turns one massive line into thousands of searchable lines
+format: text
+pre_process: "js-beautify"

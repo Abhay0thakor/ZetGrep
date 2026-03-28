@@ -32,8 +32,8 @@ import (
 	SmartMode   bool
 	EntropyMode bool
 	ResumeFile  string
+	Silent      bool
 	}
-
 	type ScannerService struct {
 	Engine       Engine
 	Fallback     Engine
@@ -313,6 +313,10 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex { continue }
 
 			var fileReader io.ReadCloser
+			var totalSize int64
+			if path != "stdin" && path != "-" {
+				if info, err := os.Stat(path); err == nil { totalSize = info.Size() }
+			}
 			
 			// Handle Pre-Processing (e.g. js-beautify)
 			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
@@ -338,25 +342,40 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			buf := make([]byte, 64*1024)
 			scanner.Buffer(buf, 20*1024*1024)
 
+			var bytesRead int64
 			for scanner.Scan() {
+				text := scanner.Text()
 				lineCount++
+				bytesRead += int64(len(text)) + 1
+
 				// Skip lines already processed in current file
 				if opts.ResumeFile != "" && i == s.Resume.FileIndex && lineCount <= s.Resume.LineIndex { continue }
 
 				select {
 				case <-ctx.Done(): fileReader.Close(); goto done
-				case lineChan <- scanner.Text():
+				case lineChan <- text:
 				}
 
-				// Periodic State Save
-				if opts.ResumeFile != "" && lineCount%5000 == 0 {
-					s.Resume.FileIndex = i
-					s.Resume.LineIndex = lineCount
-					s.Resume.Target = path
-					s.SaveResumeState(opts.ResumeFile)
+				// Periodic State Save & Progress
+				if lineCount%1000 == 0 {
+					if totalSize > 0 && !opts.Silent {
+						pct := (float64(bytesRead) / float64(totalSize)) * 100
+						if pct > 100 { pct = 100 }
+						fmt.Fprintf(os.Stderr, "\r%s Scanning %s: %.1f%%", au.Cyan("[*]"), filepath.Base(path), pct)
+					}
+					
+					if opts.ResumeFile != "" {
+						s.Resume.FileIndex = i
+						s.Resume.LineIndex = lineCount
+						s.Resume.Target = path
+						s.SaveResumeState(opts.ResumeFile)
+					}
 				}
 			}
 			fileReader.Close()
+			if !opts.Silent && totalSize > 0 {
+				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
+			}
 			// Reset line count for next file and save state
 			if opts.ResumeFile != "" {
 				s.Resume.FileIndex = i + 1
@@ -461,7 +480,12 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 	go func() {
 		for _, path := range opts.TargetPaths {
 			var fileReader io.ReadCloser
+			var totalSize int64
 			
+			if path != "-" && path != "stdin" {
+				if info, err := os.Stat(path); err == nil { totalSize = info.Size() }
+			}
+
 			if path == "-" || path == "stdin" {
 				fileReader = io.NopCloser(os.Stdin)
 			} else {
@@ -478,11 +502,23 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 				reader.Read() // Skip header
 			}
 
+			var bytesRead int64
+			var rowCount int
 			for {
 				record, err := reader.Read()
 				if err == io.EOF { break }
 				if err != nil { continue }
 				
+				rowCount++
+				// Estimate bytes processed (record joins back to string for estimation)
+				bytesRead += int64(len(strings.Join(record, separator))) + 1
+
+				if rowCount%500 == 0 && totalSize > 0 && !opts.Silent {
+					pct := (float64(bytesRead) / float64(totalSize)) * 100
+					if pct > 100 { pct = 100 }
+					fmt.Fprintf(os.Stderr, "\r%s Scanning CSV %s: %.1f%%", au.Cyan("[*]"), filepath.Base(path), pct)
+				}
+
 				select {
 				case <-ctx.Done():
 					fileReader.Close()
@@ -491,6 +527,9 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 				}
 			}
 			fileReader.Close()
+			if !opts.Silent && totalSize > 0 {
+				fmt.Fprintf(os.Stderr, "\r%s Scanned CSV %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
+			}
 		}
 	done:
 		close(recordChan)

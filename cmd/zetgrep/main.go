@@ -309,6 +309,7 @@ if inputMode != "" { finalCfg.Input.Format = inputMode }
 			SmartMode:   smartMode,
 			EntropyMode: entropyMode,
 			ResumeFile:  resumeFile,
+			Silent:      silent,
 		})
 	}
 
