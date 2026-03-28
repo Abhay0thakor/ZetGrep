@@ -20,7 +20,8 @@ Defines a regex pattern or a collection of patterns.
 ### B. Input Configuration (`inputs/*.yaml`)
 Defines how to parse structured log files (JSONL/CSV) for streaming.
 ```yaml
-format: [jsonl|json|csv]         # REQUIRED
+format: [jsonl|json|csv|text]    # REQUIRED
+pre_process: [string]            # OPTIONAL. Bash command to run on input (e.g. 'js-beautify')
 targets: [list of strings]       # REQUIRED. Supports dot notation for JSON.
 id: [string]                     # REQUIRED. Identifier field (e.g. 'url')
 decode: [bool]                   # OPTIONAL. Unescape content.

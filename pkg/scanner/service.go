@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"encoding/csv"
 	"io"
+	"os/exec"
 
 	"github.com/logrusorgru/aurora"
 	pdregexp "github.com/projectdiscovery/utils/regexp"
@@ -311,16 +312,29 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			// Skip files already processed
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex { continue }
 
-			var file *os.File
-			var err error
-			if path == "-" || path == "stdin" {
-				file = os.Stdin
-			} else {
-				file, err = os.Open(path)
-				if err != nil { continue }
+			var fileReader io.ReadCloser
+			
+			// Handle Pre-Processing (e.g. js-beautify)
+			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
+				cmd := exec.CommandContext(ctx, "bash", "-c", s.Config.Input.PreProcess+" "+path)
+				stdout, err := cmd.StdoutPipe()
+				if err == nil && cmd.Start() == nil {
+					fileReader = stdout
+					defer cmd.Wait()
+				}
+			}
+
+			if fileReader == nil {
+				if path == "-" || path == "stdin" {
+					fileReader = io.NopCloser(os.Stdin)
+				} else {
+					f, err := os.Open(path)
+					if err != nil { continue }
+					fileReader = f
+				}
 			}
 			
-			scanner := bufio.NewScanner(file)
+			scanner := bufio.NewScanner(fileReader)
 			buf := make([]byte, 64*1024)
 			scanner.Buffer(buf, 20*1024*1024)
 
@@ -330,7 +344,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 				if opts.ResumeFile != "" && i == s.Resume.FileIndex && lineCount <= s.Resume.LineIndex { continue }
 
 				select {
-				case <-ctx.Done(): file.Close(); goto done
+				case <-ctx.Done(): fileReader.Close(); goto done
 				case lineChan <- scanner.Text():
 				}
 
@@ -342,7 +356,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 					s.SaveResumeState(opts.ResumeFile)
 				}
 			}
-			file.Close()
+			fileReader.Close()
 			// Reset line count for next file and save state
 			if opts.ResumeFile != "" {
 				s.Resume.FileIndex = i + 1
@@ -446,16 +460,17 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 
 	go func() {
 		for _, path := range opts.TargetPaths {
-			var file *os.File
-			var err error
+			var fileReader io.ReadCloser
+			
 			if path == "-" || path == "stdin" {
-				file = os.Stdin
+				fileReader = io.NopCloser(os.Stdin)
 			} else {
-				file, err = os.Open(path)
+				f, err := os.Open(path)
 				if err != nil { continue }
+				fileReader = f
 			}
 			
-			reader := csv.NewReader(file)
+			reader := csv.NewReader(fileReader)
 			reader.Comma = rune(separator[0])
 			reader.LazyQuotes = true
 			
@@ -470,12 +485,12 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 				
 				select {
 				case <-ctx.Done():
-					file.Close()
+					fileReader.Close()
 					goto done
 				case recordChan <- record:
 				}
 			}
-			file.Close()
+			fileReader.Close()
 		}
 	done:
 		close(recordChan)

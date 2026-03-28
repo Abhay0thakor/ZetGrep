@@ -1,0 +1,4 @@
+# Beautify JavaScript/JSON before scanning
+# Useful for finding secrets in minified .js files or compressed JSON dumps
+format: text
+pre_process: "js-beautify"

@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version = "v0.2.2"
+	version = "v0.2.3"
 	banner  = `
 
   ______     _   _____                 
@@ -200,6 +200,7 @@ for _, ic := range inputConfigs {
 	yaml.Unmarshal(b, &inc)
 	// Map inc into finalCfg.Input (Explicit flags override global config)
 	if inc.Format != "" { finalCfg.Input.Format = inc.Format }
+	if inc.PreProcess != "" { finalCfg.Input.PreProcess = inc.PreProcess }
 	if inc.Target != "" { finalCfg.Input.Target = inc.Target }
 	if len(inc.Targets) > 0 { finalCfg.Input.Targets = inc.Targets }
 	if inc.ID != "" { finalCfg.Input.ID = inc.ID }
@@ -370,6 +371,7 @@ func mergeConfigs(dest *models.Config, src models.Config, configPath string) {
 
 	// Merge Input Config
 	if src.Input.Format != "" { dest.Input.Format = src.Input.Format }
+	if src.Input.PreProcess != "" { dest.Input.PreProcess = src.Input.PreProcess }
 	if src.Input.Target != "" { dest.Input.Target = src.Input.Target }
 	if len(src.Input.Targets) > 0 { dest.Input.Targets = src.Input.Targets }
 	if src.Input.ID != "" { dest.Input.ID = src.Input.ID }

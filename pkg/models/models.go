@@ -79,8 +79,9 @@ type Globals struct {
 }
 
 type InputConfig struct {
-	Format    string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
-	Target    string            `json:"target" yaml:"target"`   // Legacy single target
+	Format     string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
+	PreProcess string            `json:"pre_process" yaml:"pre_process"` // Command to run on input (e.g. js-beautify)
+	Target     string            `json:"target" yaml:"target"`   // Legacy single target
 	Targets   []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
 	ID        string            `json:"id" yaml:"id"`           // Source identifier field
 	Decode    bool              `json:"decode" yaml:"decode"`   // Unescape target content
