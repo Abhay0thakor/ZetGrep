@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	version = "v0.1.9"
+	version = "v0.2.0"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -44,7 +44,7 @@ func (m *multiFlag) Set(v string) error { *m = append(*m, v); return nil }
 
 func showBanner() {
 	fmt.Fprintf(os.Stderr, "%s\n", au.Bold(au.Cyan(banner)))
-	fmt.Fprintf(os.Stderr, "\t\t%s\n\n", au.Faint("v"+version))
+	fmt.Fprintf(os.Stderr, "\t\t%s\n\n", au.Faint(version))
 }
 
 func main() {
@@ -185,7 +185,7 @@ func main() {
 		var cfg models.Config
 		b, _ := os.ReadFile(cf)
 		if strings.HasSuffix(cf, ".json") { json.Unmarshal(b, &cfg) } else { yaml.Unmarshal(b, &cfg) }
-		mergeConfigs(&finalCfg, cfg)
+		mergeConfigs(&finalCfg, cfg, cf)
 	}
 	if patternsDir != "" { finalCfg.PatternsDir = patternsDir }
 	if toolsDir != "" { finalCfg.ToolsDir = toolsDir }
@@ -332,9 +332,22 @@ func main() {
 	if !silent { fmt.Printf("\n%s Finished. Total Hits: %d\n", au.Green("[+]"), hitCount) }
 }
 
-func mergeConfigs(dest *models.Config, src models.Config) {
-	if src.PatternsDir != "" { dest.PatternsDir = src.PatternsDir }
-	if src.ToolsDir != "" { dest.ToolsDir = src.ToolsDir }
+func mergeConfigs(dest *models.Config, src models.Config, configPath string) {
+	configDir := filepath.Dir(configPath)
+
+	resolve := func(path string) string {
+		if path == "" || filepath.IsAbs(path) {
+			return path
+		}
+		return filepath.Join(configDir, path)
+	}
+
+	if src.PatternsDir != "" {
+		dest.PatternsDir = resolve(src.PatternsDir)
+	}
+	if src.ToolsDir != "" {
+		dest.ToolsDir = resolve(src.ToolsDir)
+	}
 	dest.Globals.IgnoreExtensions = append(dest.Globals.IgnoreExtensions, src.Globals.IgnoreExtensions...)
 	dest.Globals.IgnoreFiles = append(dest.Globals.IgnoreFiles, src.Globals.IgnoreFiles...)
 }
