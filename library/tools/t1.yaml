@@ -1,0 +1,4 @@
+id: t1
+name: Tool 1
+command: echo "STEP1:'{{match}}'"
+field: res1

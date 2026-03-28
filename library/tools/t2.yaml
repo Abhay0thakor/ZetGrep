@@ -1,0 +1,4 @@
+id: t2
+name: Tool 2
+command: echo "STEP2:{{tool:t1}}"
+field: res2

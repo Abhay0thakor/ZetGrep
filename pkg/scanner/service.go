@@ -311,8 +311,15 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 			// Skip files already processed
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex { continue }
 
-			file, err := os.Open(path)
-			if err != nil { continue }
+			var file *os.File
+			var err error
+			if path == "-" || path == "stdin" {
+				file = os.Stdin
+			} else {
+				file, err = os.Open(path)
+				if err != nil { continue }
+			}
+			
 			scanner := bufio.NewScanner(file)
 			buf := make([]byte, 64*1024)
 			scanner.Buffer(buf, 20*1024*1024)
@@ -336,10 +343,11 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 				}
 			}
 			file.Close()
-			// Reset line count for next file
+			// Reset line count for next file and save state
 			if opts.ResumeFile != "" {
 				s.Resume.FileIndex = i + 1
 				s.Resume.LineIndex = 0
+				s.Resume.Target = "" // Clear target as we finished it
 				s.SaveResumeState(opts.ResumeFile)
 			}
 			lineCount = 0
@@ -379,7 +387,6 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 	
 	idIdx := s.Config.Input.CSVConfig.IDIndex
 	targetIdxs := s.Config.Input.CSVConfig.TargetIdx
-	if len(targetIdxs) == 0 { targetIdxs = []int{0} }
 
 	recordChan := make(chan []string, 1000)
 	var wg sync.WaitGroup
@@ -390,10 +397,16 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 		go func() {
 			defer wg.Done()
 			for record := range recordChan {
+				// Determine targets dynamically if not specified
+				currentTargets := targetIdxs
+				if len(currentTargets) == 0 {
+					for idx := range record { currentTargets = append(currentTargets, idx) }
+				}
+
 				idVal := "unknown"
 				if idIdx < len(record) { idVal = record[idIdx] }
 
-				for _, tIdx := range targetIdxs {
+				for _, tIdx := range currentTargets {
 					if tIdx >= len(record) { continue }
 					content := record[tIdx]
 
@@ -433,8 +446,14 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 
 	go func() {
 		for _, path := range opts.TargetPaths {
-			file, err := os.Open(path)
-			if err != nil { continue }
+			var file *os.File
+			var err error
+			if path == "-" || path == "stdin" {
+				file = os.Stdin
+			} else {
+				file, err = os.Open(path)
+				if err != nil { continue }
+			}
 			
 			reader := csv.NewReader(file)
 			reader.Comma = rune(separator[0])
@@ -510,81 +529,107 @@ func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string,
 
 func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 	var logs []string
-	logs = append(logs, fmt.Sprintf("%s Testing input line: %s", au.Bold(au.Cyan("[DEBUG]")), line))
+	logs = append(logs, fmt.Sprintf("%s Testing input line (Format: %s): %s", au.Bold(au.Cyan("[DEBUG]")), s.Config.Input.Format, line))
 
 	if line == "" {
 		logs = append(logs, fmt.Sprintf("%s Line is empty", au.Red("[ERROR]")))
 		return logs
 	}
 
-	var data map[string]interface{}
-	err := json.Unmarshal([]byte(line), &data)
-	if err != nil {
-		logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
-	} else {
-		logs = append(logs, fmt.Sprintf("%s JSON parsed successfully", au.Green("[SUCCESS]")))
-	}
+	var contents []string
+	var idVal string = "unknown"
 
-	// Filter Check
-	if err == nil {
-		for field, val := range s.Config.Input.Filters {
-			v, ok := getNestedField(data, field)
-			if !ok {
-				logs = append(logs, fmt.Sprintf("%s Field '%s' missing. %s", au.Yellow("[FILTER]"), field, au.Red("SKIP.")))
-				return logs
+	if s.Config.Input.Format == "csv" {
+		sep := s.Config.Input.CSVConfig.Separator
+		if sep == "" { sep = "," }
+		reader := csv.NewReader(strings.NewReader(line))
+		reader.Comma = rune(sep[0])
+		record, err := reader.Read()
+		if err != nil {
+			logs = append(logs, fmt.Sprintf("%s CSV Parse failed: %v", au.Red("[ERROR]"), err))
+			return logs
+		}
+		logs = append(logs, fmt.Sprintf("%s CSV parsed successfully (%d columns)", au.Green("[SUCCESS]"), len(record)))
+		
+		idIdx := s.Config.Input.CSVConfig.IDIndex
+		if idIdx < len(record) { idVal = record[idIdx] }
+		
+		targetIdxs := s.Config.Input.CSVConfig.TargetIdx
+		if len(targetIdxs) == 0 {
+			for i := range record { targetIdxs = append(targetIdxs, i) }
+		}
+		
+		for _, idx := range targetIdxs {
+			if idx < len(record) { contents = append(contents, record[idx]) }
+		}
+	} else {
+		// Default to JSONL logic
+		var data map[string]interface{}
+		err := json.Unmarshal([]byte(line), &data)
+		if err != nil {
+			logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
+		} else {
+			logs = append(logs, fmt.Sprintf("%s JSON parsed successfully", au.Green("[SUCCESS]")))
+		}
+
+		// Filter Check
+		if err == nil {
+			for field, val := range s.Config.Input.Filters {
+				v, ok := getNestedField(data, field)
+				if !ok {
+					logs = append(logs, fmt.Sprintf("%s Field '%s' missing. %s", au.Yellow("[FILTER]"), field, au.Red("SKIP.")))
+					return logs
+				}
+				if v != val {
+					logs = append(logs, fmt.Sprintf("%s Field '%s' value '%s' != '%s'. %s", au.Yellow("[FILTER]"), field, v, val, au.Red("SKIP.")))
+					return logs
+				}
+				logs = append(logs, fmt.Sprintf("%s Field '%s' matches '%s'. %s", au.Yellow("[FILTER]"), field, val, au.Green("PASS.")))
 			}
-			if v != val {
-				logs = append(logs, fmt.Sprintf("%s Field '%s' value '%s' != '%s'. %s", au.Yellow("[FILTER]"), field, v, val, au.Red("SKIP.")))
-				return logs
+		}
+
+		idField := s.Config.Input.ID
+		if err == nil {
+			idVal, _ = getNestedField(data, idField)
+			if idVal == "" { idVal = "unknown" }
+		}
+
+		var targets []string
+		if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
+		targets = append(targets, s.Config.Input.Targets...)
+
+		for _, targetField := range targets {
+			if targetField == "$" {
+				contents = append(contents, line)
+				logs = append(logs, fmt.Sprintf("%s Added target '$' (Raw Line)", au.Blue("[TARGET]")))
+			} else if err == nil {
+				content, ok := getNestedField(data, targetField)
+				if ok {
+					contents = append(contents, content)
+					logs = append(logs, fmt.Sprintf("%s Found field '%s'.", au.Blue("[TARGET]"), targetField))
+				}
 			}
-			logs = append(logs, fmt.Sprintf("%s Field '%s' matches '%s'. %s", au.Yellow("[FILTER]"), field, val, au.Green("PASS.")))
 		}
 	}
 
-	// Target Check
-	var targets []string
-	if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
-	targets = append(targets, s.Config.Input.Targets...)
-
-	if len(targets) == 0 {
-		logs = append(logs, fmt.Sprintf("%s No targets defined in config!", au.Red("[ERROR]")))
+	if len(contents) == 0 && s.Config.Input.Format != "csv" {
+		logs = append(logs, fmt.Sprintf("%s No targets matched!", au.Red("[ERROR]")))
 		return logs
 	}
 
-	for _, targetField := range targets {
-		var content string
-		var ok bool
-		if targetField == "$" {
-			content = line
-			ok = true
-			logs = append(logs, fmt.Sprintf("%s Using special target '$' (Raw Line)", au.Blue("[TARGET]")))
-		} else if err == nil {
-			content, ok = getNestedField(data, targetField)
-			if ok {
-				logs = append(logs, fmt.Sprintf("%s Found field '%s'. Content: %s", au.Blue("[TARGET]"), targetField, content))
-			} else {
-				logs = append(logs, fmt.Sprintf("%s Field '%s' NOT FOUND in JSON", au.Yellow("[TARGET]"), targetField))
+	for _, content := range contents {
+		if content == "" { continue }
+		for _, pName := range patterns {
+			if pName == "" { continue }
+			p, perr := s.getPattern(pName)
+			if perr != nil { continue }
+			re, rerr := regexp.Compile(p.Pattern)
+			if rerr != nil {
+				logs = append(logs, fmt.Sprintf("%s Pattern '%s' invalid regex: %v", au.Red("[PATTERN]"), pName, rerr))
+				continue
 			}
-		}
-
-		if ok && content != "" {
-			for _, pName := range patterns {
-				if pName == "" { continue }
-				p, perr := s.getPattern(pName)
-				if perr != nil {
-					logs = append(logs, fmt.Sprintf("%s Pattern '%s' load failed: %v", au.Red("[PATTERN]"), pName, perr))
-					continue
-				}
-				re, rerr := regexp.Compile(p.Pattern)
-				if rerr != nil {
-					logs = append(logs, fmt.Sprintf("%s Pattern '%s' invalid regex: %v", au.Red("[PATTERN]"), pName, rerr))
-					continue
-				}
-				if matches := re.FindAllStringSubmatch(content, -1); len(matches) > 0 {
-					logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in '%s'", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), targetField))
-				} else {
-					logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s in '%s'", au.Yellow("[MISSED]"), pName, au.Red("did not match"), targetField))
-				}
+			if matches := re.FindAllStringSubmatch(content, -1); len(matches) > 0 {
+				logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in content: %s", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), content))
 			}
 		}
 	}

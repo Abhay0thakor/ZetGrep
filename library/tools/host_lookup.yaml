@@ -1,5 +1,5 @@
 id: host_dns
 name: Host DNS Lookup
 description: Resolves a domain to its A record
-command: "host {{match}} | grep 'has address' | head -n 1"
+command: "host '{{match}}' | grep 'has address' | head -n 1"
 field: ip_address

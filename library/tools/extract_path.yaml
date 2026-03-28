@@ -1,5 +1,5 @@
 id: extract_path
 name: Extract Path
 description: Extracts the path part of a URL
-command: "echo {{match}} | awk -F/ '{print \"/\"\$4}'"
+command: "echo '{{match}}' | awk -F/ '{print \"/\"\$4}'"
 field: path

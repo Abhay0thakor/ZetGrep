@@ -1,5 +1,5 @@
 id: b64_decode
 name: Base64 Decode
 description: Decodes a base64 string
-command: "echo {{match}} | base64 -d"
+command: "echo '{{match}}' | base64 -d"
 field: decoded

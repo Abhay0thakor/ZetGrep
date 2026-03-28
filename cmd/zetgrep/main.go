@@ -56,6 +56,7 @@ func main() {
 		inputConfigs multiFlag
 		listFile     string
 		stdin        bool
+		inputMode    string
 
 		// Config
 		configFiles multiFlag
@@ -93,6 +94,7 @@ func main() {
 	flag.Var(&inputConfigs, "input-config", "path to input config file (YAML, multiple allowed)")
 	flag.StringVar(&listFile, "l", "", "file containing list of targets to scan")
 	flag.BoolVar(&stdin, "stdin", false, "read targets from stdin")
+	flag.StringVar(&inputMode, "im", "", "input mode (jsonl, csv, text)")
 
 	flag.Var(&configFiles, "config-file", "path to global config file (YAML/JSON, multiple allowed)")
 	flag.Var(&toolFiles, "tool", "path to individual tool YAML file (multiple allowed)")
@@ -127,7 +129,7 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Usage: zetgrep [flags] [pattern] [targets...]\n\n")
 		
 		groups := map[string][]string{
-			"INPUT": {"input-config", "l", "stdin"},
+			"INPUT": {"input-config", "im", "l", "stdin"},
 			"CONFIG": {"config-file", "tool", "pd", "td"},
 			"FILTER": {"all", "smart", "entropy", "diagnose", "tags"},
 			"OUTPUT": {"json", "report", "o", "silent", "verbose", "no-color"},
@@ -179,8 +181,7 @@ func main() {
 	// 1. Resolve Global Configuration
 	var finalCfg models.Config
 	if len(configFiles) == 0 {
-		home, _ := os.UserHomeDir()
-		def := filepath.Join(home, ".config", "gf", "config.yaml")
+		def := utils.ExpandPath("~/.config/gf/config.yaml")
 		if _, err := os.Stat(def); err == nil { configFiles = append(configFiles, def) }
 	}
 	for _, cf := range configFiles {
@@ -191,20 +192,26 @@ func main() {
 	}
 	if patternsDir != "" { finalCfg.PatternsDir = utils.ExpandPath(patternsDir) }
 	if toolsDir != "" { finalCfg.ToolsDir = utils.ExpandPath(toolsDir) }
-
-	// 2. Resolve Input Configuration
-	for _, ic := range inputConfigs {
-		ic = utils.ExpandPath(ic)
-		var inc models.InputConfig
-		b, _ := os.ReadFile(ic)
-		yaml.Unmarshal(b, &inc)
-		if inc.Format != "" { finalCfg.Input.Format = inc.Format }
-		if len(inc.Targets) > 0 { finalCfg.Input.Targets = inc.Targets }
-		if inc.ID != "" { finalCfg.Input.ID = inc.ID }
-		if len(inc.Filters) > 0 { finalCfg.Input.Filters = inc.Filters }
-		if inc.CSVConfig.Separator != "" { finalCfg.Input.CSVConfig = inc.CSVConfig }
-		finalCfg.Input.Decode = finalCfg.Input.Decode || inc.Decode
+// 2. Resolve Input Configuration (Manual overrides via -input-config)
+for _, ic := range inputConfigs {
+	ic = utils.ExpandPath(ic)
+	var inc models.InputConfig
+	b, _ := os.ReadFile(ic)
+	yaml.Unmarshal(b, &inc)
+	// Map inc into finalCfg.Input (Explicit flags override global config)
+	if inc.Format != "" { finalCfg.Input.Format = inc.Format }
+	if inc.Target != "" { finalCfg.Input.Target = inc.Target }
+	if len(inc.Targets) > 0 { finalCfg.Input.Targets = inc.Targets }
+	if inc.ID != "" { finalCfg.Input.ID = inc.ID }
+	if len(inc.Filters) > 0 {
+		if finalCfg.Input.Filters == nil { finalCfg.Input.Filters = make(map[string]string) }
+		for k, v := range inc.Filters { finalCfg.Input.Filters[k] = v }
 	}
+	if inc.CSVConfig.Separator != "" { finalCfg.Input.CSVConfig = inc.CSVConfig }
+	finalCfg.Input.Decode = finalCfg.Input.Decode || inc.Decode
+}
+
+if inputMode != "" { finalCfg.Input.Format = inputMode }
 
 	svc, err := scanner.NewScannerService(finalCfg)
 	if err != nil {
@@ -259,8 +266,7 @@ func main() {
 	// 3. Resolve Targets
 	var targets []string
 	if stdin {
-		s := bufio.NewScanner(os.Stdin)
-		for s.Scan() { targets = append(targets, utils.ExpandPath(s.Text())) }
+		targets = []string{"stdin"}
 	} else if listFile != "" {
 		f, _ := os.Open(utils.ExpandPath(listFile))
 		s := bufio.NewScanner(f)
@@ -273,6 +279,8 @@ func main() {
 		if len(targets) > 1 && !allMode { targets = targets[1:] }
 	}
 	if len(targets) == 0 { targets = []string{"."} }
+
+	if inputMode != "" { finalCfg.Input.Format = inputMode }
 
 	// 4. Execution
 	var runPats []string
@@ -344,6 +352,10 @@ func mergeConfigs(dest *models.Config, src models.Config, configPath string) {
 		if path == "" || filepath.IsAbs(path) {
 			return path
 		}
+		// Expand tilde if present in the config value
+		if strings.HasPrefix(path, "~") {
+			return utils.ExpandPath(path)
+		}
 		return filepath.Join(configDir, path)
 	}
 
@@ -355,6 +367,18 @@ func mergeConfigs(dest *models.Config, src models.Config, configPath string) {
 	}
 	dest.Globals.IgnoreExtensions = append(dest.Globals.IgnoreExtensions, src.Globals.IgnoreExtensions...)
 	dest.Globals.IgnoreFiles = append(dest.Globals.IgnoreFiles, src.Globals.IgnoreFiles...)
+
+	// Merge Input Config
+	if src.Input.Format != "" { dest.Input.Format = src.Input.Format }
+	if src.Input.Target != "" { dest.Input.Target = src.Input.Target }
+	if len(src.Input.Targets) > 0 { dest.Input.Targets = src.Input.Targets }
+	if src.Input.ID != "" { dest.Input.ID = src.Input.ID }
+	if src.Input.Decode { dest.Input.Decode = true }
+	if len(src.Input.Filters) > 0 {
+		if dest.Input.Filters == nil { dest.Input.Filters = make(map[string]string) }
+		for k, v := range src.Input.Filters { dest.Input.Filters[k] = v }
+	}
+	if src.Input.CSVConfig.Separator != "" { dest.Input.CSVConfig = src.Input.CSVConfig }
 }
 
 func formatResult(tmpl string, res models.Result) string {
@@ -364,9 +388,14 @@ func formatResult(tmpl string, res models.Result) string {
 	out = strings.ReplaceAll(out, "{{line}}", fmt.Sprintf("%d", res.Line))
 	out = strings.ReplaceAll(out, "{{content}}", res.Content)
 	out = strings.ReplaceAll(out, "{{ext}}", res.Ext)
+	out = strings.ReplaceAll(out, "{{entropy}}", fmt.Sprintf("%.3f", res.Entropy))
+	
 	mainMatch := res.Content; if len(res.Matches) > 0 { mainMatch = res.Matches[0] }
 	out = strings.ReplaceAll(out, "{{match}}", mainMatch)
+	
 	for i, m := range res.Matches { out = strings.ReplaceAll(out, fmt.Sprintf("{{match[%d]}}", i), m) }
+	
+	// Replace both {{tool:ID}} and {{tool:Label}}
 	for _, td := range res.ToolData {
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.ToolID), td.Value)
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.Label), td.Value)

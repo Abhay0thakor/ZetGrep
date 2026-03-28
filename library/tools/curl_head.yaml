@@ -1,5 +1,5 @@
 id: curl_head
 name: CURL Headers
 description: Gets the response headers for a URL
-command: "curl -s -I {{match}} | head -n 1"
+command: "curl -s -I '{{match}}' | head -n 1"
 field: status

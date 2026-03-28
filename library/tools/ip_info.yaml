@@ -1,5 +1,5 @@
 id: ip_info
 name: IP Information
 description: Fetches info about an IP address
-command: "curl -s ipinfo.io/{{match}}/json | grep '\"org\"' | cut -d: -f2"
+command: "curl -s ipinfo.io/'{{match}}'/json | grep '\"org\"' | cut -d: -f2"
 field: organization

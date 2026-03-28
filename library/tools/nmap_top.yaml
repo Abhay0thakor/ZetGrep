@@ -1,5 +1,5 @@
 id: nmap_fast
 name: Nmap Fast Scan
 description: Scans top 10 ports on a target
-command: "nmap --top-ports 10 {{match}} | grep 'open' | head -n 5"
+command: "nmap --top-ports 10 '{{match}}' | grep 'open' | head -n 5"
 field: open_ports

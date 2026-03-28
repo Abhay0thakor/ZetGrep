@@ -1,5 +1,5 @@
 id: reverse_dns
 name: Reverse DNS Lookup
 description: Performs a PTR lookup for an IP
-command: "host {{match}} | grep 'domain name pointer' | head -n 1"
+command: "host '{{match}}' | grep 'domain name pointer' | head -n 1"
 field: hostname
