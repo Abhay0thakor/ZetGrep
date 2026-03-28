@@ -20,7 +20,7 @@ import (
 )
 
 const (
-	version = "v0.1.8"
+	version = "v0.1.9"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -166,6 +166,7 @@ func main() {
 	if updateMode {
 		fmt.Printf("%s Updating to latest...\n", au.Cyan("[*]"))
 		cmd := exec.Command("go", "install", "-v", "github.com/Abhay0thakor/ZetGrep/cmd/zetgrep@latest")
+		cmd.Env = append(os.Environ(), "GOPROXY=direct")
 		cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 		if err := cmd.Run(); err == nil {
 			fmt.Println(au.Green("[+] ZetGrep updated successfully!"))

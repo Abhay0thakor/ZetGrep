@@ -1,4 +1,4 @@
-# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.1.8)
+# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.1.9)
 
 A professional-grade pattern matching and orchestration engine designed for security auditors, bug hunters, and data engineers. 
 
