@@ -608,7 +608,7 @@ func (s *ScannerService) SaveResumeState(file string) error {
 func (s *ScannerService) FilterPatternsByTag(tags []string) []string {
 	if len(tags) == 0 { return nil }
 	var matched []string
-	pats, _ := GetPatterns()
+	pats, _ := GetPatterns(s.Config.PatternsDir)
 	for _, pName := range pats {
 		p, _ := s.getPattern(pName)
 		for _, t := range tags {

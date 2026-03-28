@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version = "v0.2.1"
+	version = "v0.2.2"
 	banner  = `
 
   ______     _   _____                 
@@ -218,7 +218,7 @@ func main() {
 	}
 
 	if listObjects {
-		pats, _ := scanner.GetPatterns()
+		pats, _ := scanner.GetPatterns(svc.Config.PatternsDir)
 		fmt.Printf("%s Patterns: %s\n", au.Bold("Available"), strings.Join(pats, ", "))
 		fmt.Printf("%s Tools:\n", au.Bold("Available"))
 		for _, t := range svc.Tools { fmt.Printf("  - %s: %s\n", au.Cyan(t.ID), t.Description) }
@@ -251,7 +251,7 @@ func main() {
 
 	if diagnose != "" {
 		pats := flag.Args()
-		if allMode { pats, _ = scanner.GetPatterns() }
+		if allMode { pats, _ = scanner.GetPatterns(svc.Config.PatternsDir) }
 		for _, l := range svc.DiagnoseLine(diagnose, pats) { fmt.Println(l) }
 		return
 	}
@@ -277,7 +277,7 @@ func main() {
 	// 4. Execution
 	var runPats []string
 	if allMode {
-		runPats, _ = scanner.GetPatterns()
+		runPats, _ = scanner.GetPatterns(svc.Config.PatternsDir)
 	} else if len(tags) > 0 {
 		runPats = svc.FilterPatternsByTag(tags)
 	} else if flag.NArg() > 0 {

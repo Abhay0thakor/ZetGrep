@@ -12,6 +12,7 @@ import (
 	"sync"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
+	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	fileutil "github.com/projectdiscovery/utils/file"
 )
 
@@ -188,12 +189,17 @@ func GetPatternDir() (string, error) {
 	return "examples", fmt.Errorf("no patterns directory found")
 }
 
-func GetPatterns() ([]string, error) {
-	d, err := GetPatternDir()
-	if err != nil {
-		return nil, err
+func GetPatterns(dir string) ([]string, error) {
+	if dir == "" {
+		var err error
+		dir, err = GetPatternDir()
+		if err != nil {
+			return nil, err
+		}
 	}
-	fsList, _ := filepath.Glob(filepath.Join(d, "*.json"))
+	
+	dir = utils.ExpandPath(dir)
+	fsList, _ := filepath.Glob(filepath.Join(dir, "*.json"))
 	var res []string
 	for _, f := range fsList {
 		res = append(res, strings.TrimSuffix(filepath.Base(f), ".json"))

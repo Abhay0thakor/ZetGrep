@@ -89,7 +89,7 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
-	p, _ := scanner.GetPatterns()
+	p, _ := scanner.GetPatterns(s.svc.Config.PatternsDir)
 	json.NewEncoder(w).Encode(p)
 }
 
