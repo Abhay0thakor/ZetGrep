@@ -16,12 +16,14 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/api"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
+	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	"gopkg.in/yaml.v3"
 )
 
 const (
-	version = "v0.2.0"
+	version = "v0.2.1"
 	banner  = `
+
   ______     _   _____                 
  |___  /    | | |  __ \                
     / /  ___| |_| |  \/_ __ ___ _ __  
@@ -187,11 +189,12 @@ func main() {
 		if strings.HasSuffix(cf, ".json") { json.Unmarshal(b, &cfg) } else { yaml.Unmarshal(b, &cfg) }
 		mergeConfigs(&finalCfg, cfg, cf)
 	}
-	if patternsDir != "" { finalCfg.PatternsDir = patternsDir }
-	if toolsDir != "" { finalCfg.ToolsDir = toolsDir }
+	if patternsDir != "" { finalCfg.PatternsDir = utils.ExpandPath(patternsDir) }
+	if toolsDir != "" { finalCfg.ToolsDir = utils.ExpandPath(toolsDir) }
 
 	// 2. Resolve Input Configuration
 	for _, ic := range inputConfigs {
+		ic = utils.ExpandPath(ic)
 		var inc models.InputConfig
 		b, _ := os.ReadFile(ic)
 		yaml.Unmarshal(b, &inc)
@@ -257,15 +260,17 @@ func main() {
 	var targets []string
 	if stdin {
 		s := bufio.NewScanner(os.Stdin)
-		for s.Scan() { targets = append(targets, s.Text()) }
+		for s.Scan() { targets = append(targets, utils.ExpandPath(s.Text())) }
 	} else if listFile != "" {
-		f, _ := os.Open(listFile)
+		f, _ := os.Open(utils.ExpandPath(listFile))
 		s := bufio.NewScanner(f)
-		for s.Scan() { targets = append(targets, s.Text()) }
+		for s.Scan() { targets = append(targets, utils.ExpandPath(s.Text())) }
 		f.Close()
 	} else {
-		targets = flag.Args()
-		if len(targets) > 1 && !allMode { targets = flag.Args()[1:] }
+		for _, arg := range flag.Args() {
+			targets = append(targets, utils.ExpandPath(arg))
+		}
+		if len(targets) > 1 && !allMode { targets = targets[1:] }
 	}
 	if len(targets) == 0 { targets = []string{"."} }
 

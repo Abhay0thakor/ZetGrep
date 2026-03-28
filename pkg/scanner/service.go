@@ -480,6 +480,7 @@ func (s *ScannerService) getActiveTools(toolIDs []string) []models.Tool {
 }
 
 func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string, toolIDs []string) (<-chan *models.Result, error) {
+	resultsFile = utils.ExpandPath(resultsFile)
 	resultChan := make(chan *models.Result, 2000)
 	activeTools := s.getActiveTools(toolIDs)
 
@@ -592,12 +593,14 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 }
 
 func (s *ScannerService) LoadResumeState(file string) error {
+	file = utils.ExpandPath(file)
 	b, err := os.ReadFile(file)
 	if err != nil { return err }
 	return json.Unmarshal(b, &s.Resume)
 }
 
 func (s *ScannerService) SaveResumeState(file string) error {
+	file = utils.ExpandPath(file)
 	b, _ := json.MarshalIndent(s.Resume, "", "  ")
 	return os.WriteFile(file, b, 0644)
 }

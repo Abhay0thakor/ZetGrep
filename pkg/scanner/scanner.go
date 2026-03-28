@@ -179,7 +179,7 @@ func GetPatternDir() (string, error) {
 		}
 	}
 	home, _ := os.UserHomeDir()
-	for _, d := range []string{".zetgrep", ".config/zetgrep/patterns"} {
+	for _, d := range []string{".zetgrep", ".config/gf/patterns"} {
 		path := filepath.Join(home, d)
 		if fileutil.FolderExists(path) {
 			return path, nil

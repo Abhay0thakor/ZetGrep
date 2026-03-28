@@ -20,7 +20,7 @@ func GetToolDir() (string, error) {
 		return "tools", nil
 	}
 	home, _ := os.UserHomeDir()
-	confDir := filepath.Join(home, ".config", "zetgrep", "tools")
+	confDir := filepath.Join(home, ".config", "gf", "tools")
 	if fileutil.FolderExists(confDir) {
 		return confDir, nil
 	}
