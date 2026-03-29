@@ -209,9 +209,12 @@ for _, ic := range inputConfigs {
 		for k, v := range inc.Filters { finalCfg.Input.Filters[k] = v }
 	}
 	if inc.CSVConfig.Separator != "" { finalCfg.Input.CSVConfig = inc.CSVConfig }
+	if len(inc.PostProcess) > 0 {
+		if finalCfg.Input.PostProcess == nil { finalCfg.Input.PostProcess = make(map[string]string) }
+		for k, v := range inc.PostProcess { finalCfg.Input.PostProcess[k] = v }
+	}
 	finalCfg.Input.Decode = finalCfg.Input.Decode || inc.Decode
-}
-
+	}
 if inputMode != "" { finalCfg.Input.Format = inputMode }
 
 	svc, err := scanner.NewScannerService(finalCfg)
@@ -382,6 +385,10 @@ func mergeConfigs(dest *models.Config, src models.Config, configPath string) {
 		for k, v := range src.Input.Filters { dest.Input.Filters[k] = v }
 	}
 	if src.Input.CSVConfig.Separator != "" { dest.Input.CSVConfig = src.Input.CSVConfig }
+	if len(src.Input.PostProcess) > 0 {
+		if dest.Input.PostProcess == nil { dest.Input.PostProcess = make(map[string]string) }
+		for k, v := range src.Input.PostProcess { dest.Input.PostProcess[k] = v }
+	}
 }
 
 func formatResult(tmpl string, res models.Result) string {

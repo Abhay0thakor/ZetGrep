@@ -272,6 +272,14 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 					
 					if !ok || content == "" { continue }
 
+					// Apply Post-Processing (e.g. js-beautify on body)
+					if cmdStr, exists := s.Config.Input.PostProcess[targetField]; exists {
+						cmd := exec.CommandContext(ctx, "bash", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+cmdStr)
+						if out, err := cmd.Output(); err == nil {
+							content = string(out)
+						}
+					}
+
 					for _, cp := range compiledPatterns {
 						matches := cp.comp.FindAllStringSubmatch(content, -1)
 						for _, matchGroup := range matches {

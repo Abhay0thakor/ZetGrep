@@ -21,7 +21,9 @@ Defines a regex pattern or a collection of patterns.
 Defines how to parse structured log files (JSONL/CSV) for streaming.
 ```yaml
 format: [jsonl|json|csv|text]    # REQUIRED
-pre_process: [string]            # OPTIONAL. Bash command to run on input (e.g. 'js-beautify')
+pre_process: [string]            # OPTIONAL. Bash command to run on entire input file.
+post_process: [map of key:cmd]   # OPTIONAL. Map of JSON field -> command to run on field value.
+                                 # e.g., { body: "js-beautify" }
 targets: [list of strings]       # REQUIRED. Supports dot notation for JSON.
 id: [string]                     # REQUIRED. Identifier field (e.g. 'url')
 decode: [bool]                   # OPTIONAL. Unescape content.

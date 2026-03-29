@@ -1,0 +1,12 @@
+# Comprehensive HTTPX Scanning with automated body beautification
+format: jsonl
+targets:
+  - url
+  - header
+  - body
+id: url
+filters:
+  status_code: "200"
+decode: true
+post_process:
+  body: "js-beautify"

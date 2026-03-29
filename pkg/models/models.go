@@ -84,9 +84,10 @@ type InputConfig struct {
 	Target     string            `json:"target" yaml:"target"`   // Legacy single target
 	Targets   []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
 	ID        string            `json:"id" yaml:"id"`           // Source identifier field
-	Decode    bool              `json:"decode" yaml:"decode"`   // Unescape target content
-	Filters   map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
-	CSVConfig CSVConfig         `json:"csv_config" yaml:"csv_config"`
+	Decode      bool              `json:"decode" yaml:"decode"`   // Unescape target content
+	Filters     map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
+	PostProcess map[string]string `json:"post_process" yaml:"post_process"` // Field-specific commands
+	CSVConfig   CSVConfig         `json:"csv_config" yaml:"csv_config"`
 }
 
 type CSVConfig struct {
