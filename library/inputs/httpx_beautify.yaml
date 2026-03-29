@@ -5,8 +5,6 @@ targets:
   - header
   - body
 id: url
-filters:
-  status_code: "200"
 decode: true
 post_process:
   body: "js-beautify"
