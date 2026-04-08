@@ -1,5 +1,5 @@
 format: jsonl
 targets:
-  - url
-id: source_js
+  - body
+id: url
 decode: false

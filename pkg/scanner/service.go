@@ -16,7 +16,6 @@ import (
 	"os/exec"
 
 	"github.com/logrusorgru/aurora"
-	pdregexp "github.com/projectdiscovery/utils/regexp"
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
@@ -142,58 +141,61 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		return s.RunCSVScan(ctx, opts)
 	}
 
-	resultChan := make(chan *models.Result, 1000)
-	activeTools := s.getActiveTools(opts.ToolIDs)
-	patternQueue := make(chan string)
-	var wg sync.WaitGroup
+	// Use RunTextScan for everything else (text, html, js) to support pipelines
+	return s.RunTextScan(ctx, opts)
+}
 
-	ignoreFiles := make(map[string]bool)
-	for _, f := range s.Config.Globals.IgnoreFiles { ignoreFiles[f] = true }
-	ignoreExts := make(map[string]bool)
-	for _, e := range s.Config.Globals.IgnoreExtensions {
-		if !strings.HasPrefix(e, ".") { e = "." + e }; ignoreExts[e] = true
+func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
+	resultChan := make(chan *models.Result, 1000)
+
+	var compiledPatterns []struct {
+		p    models.Pattern
+		comp *regexp.Regexp
 	}
 
-	numWorkers := runtime.NumCPU()
+	for _, pName := range opts.Patterns {
+		p, err := s.getPattern(pName); if err != nil { continue }
+		if comp, err := regexp.Compile(p.Pattern); err == nil {
+			compiledPatterns = append(compiledPatterns, struct { p models.Pattern; comp *regexp.Regexp }{p, comp})
+		}
+	}
+
+	activeTools := s.getActiveTools(opts.ToolIDs)
+	lineChan := make(chan string, 1000)
+	var wg sync.WaitGroup
+	numWorkers := runtime.NumCPU() * 2
+
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for name := range patternQueue {
-				p, err := s.getPattern(name)
-				if err != nil { continue }
-				comp, _ := pdregexp.Compile(p.Pattern)
-
-				var resChan <-chan *models.Result
-				if s.Engine != nil {
-					resChan, _ = s.Engine.Execute(ctx, p, opts.TargetPaths...)
-				} else if s.Fallback != nil {
-					resChan, _ = s.Fallback.Execute(ctx, p, opts.TargetPaths...)
+			for line := range lineChan {
+				if line == "" { continue }
+				
+				content := line
+				if s.Config.Input.Decode { content = unescapeContent(content) }
+				
+				// Post-process for text usually applies to the whole line
+				if cmdStr, exists := s.Config.Input.PostProcess["$"]; exists {
+					cmd := exec.CommandContext(ctx, "bash", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+cmdStr)
+					if out, err := cmd.Output(); err == nil { content = string(out) }
 				}
 
-				if resChan == nil { continue }
-
-				for res := range resChan {
-					if ignoreFiles[filepath.Base(res.File)] || ignoreExts[res.Ext] {
-						PutResult(res); continue
-					}
-					if comp != nil {
-						if m := comp.FindStringSubmatch(res.Content); len(m) > 0 {
-							res.Matches = m
-							res.Entropy = utils.ShannonEntropy(m[0])
+				for _, cp := range compiledPatterns {
+					matches := cp.comp.FindAllStringSubmatch(content, -1)
+					for _, matchGroup := range matches {
+						if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
+						res := GetResult()
+						res.Pattern = cp.p.Name; res.Content = matchGroup[0]; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(res.Content)
+						if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+							PutResult(res); continue
 						}
-					}
-					if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
-						PutResult(res); continue
-					}
-					for _, t := range activeTools {
-						if val, _ := s.executeToolWithLimit(t, *res); val != "" {
-							res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+						for _, t := range activeTools {
+							if val, _ := s.executeToolWithLimit(t, *res); val != "" {
+								res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+							}
 						}
-					}
-					select {
-					case <-ctx.Done(): return
-					case resultChan <- res:
+						select { case <-ctx.Done(): return; case resultChan <- res: }
 					}
 				}
 			}
@@ -201,18 +203,38 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	}
 
 	go func() {
-		for _, pName := range opts.Patterns {
-			if pName == "" { continue }
-			select {
-			case <-ctx.Done(): break
-			case patternQueue <- pName:
+		var lineCount int
+		for _, path := range opts.TargetPaths {
+			var fileReader io.ReadCloser; var totalSize int64
+			if path != "stdin" && path != "-" { if info, err := os.Stat(path); err == nil { totalSize = info.Size() } }
+			
+			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
+				cmd := exec.CommandContext(ctx, "bash", "-c", s.Config.Input.PreProcess+" "+path)
+				if stdout, err := cmd.StdoutPipe(); err == nil && cmd.Start() == nil {
+					fileReader = stdout; defer cmd.Wait()
+				}
 			}
+			if fileReader == nil {
+				if path == "-" || path == "stdin" { fileReader = io.NopCloser(os.Stdin)
+				} else { f, err := os.Open(path); if err != nil { continue }; fileReader = f }
+			}
+			scanner := bufio.NewScanner(fileReader); buf := make([]byte, 64*1024); scanner.Buffer(buf, 20*1024*1024)
+			var bytesRead int64
+			for scanner.Scan() {
+				text := scanner.Text(); lineCount++
+				bytesRead += int64(len(text)) + 1
+				select { case <-ctx.Done(): fileReader.Close(); goto done; case lineChan <- text: }
+				if lineCount%500 == 0 && totalSize > 0 && !opts.Silent {
+					pct := (float64(bytesRead) / float64(totalSize)) * 100
+					fmt.Fprintf(os.Stderr, "\r%s Scanning %s: %.1f%% (%d lines)", au.Cyan("[*]"), filepath.Base(path), pct, lineCount)
+				}
+			}
+			fileReader.Close()
+			if !opts.Silent && totalSize > 0 { fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path)) }
 		}
-		close(patternQueue)
-		wg.Wait()
-		close(resultChan)
+	done:
+		close(lineChan); wg.Wait(); close(resultChan)
 	}()
-
 	return resultChan, nil
 }
 
