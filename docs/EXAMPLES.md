@@ -14,7 +14,7 @@ globals:
 
 **Command**:
 ```bash
-./zetgrep -config-file config.yaml -all ./target-repo
+zetgrep -config-file config.yaml -all ./target-repo
 ```
 
 **Real Output**:
@@ -25,7 +25,7 @@ Search for base64-like strings and automatically decode them to see if they cont
 
 **Command**:
 ```bash
-./zetgrep -tools b64_decode -o "FILE: {{file}} | DECODED: {{tool:b64_decode}}" base64 ./src
+zetgrep -w b64_decode -o "FILE: {{file}} | DECODED: {{tool:b64_decode}}" base64 ./src
 ```
 
 **Real Output**:
@@ -44,7 +44,7 @@ decode: true
 
 **Command**:
 ```bash
-./zetgrep -input-config httpx.yaml -json ip huge_dump.jsonl > matches.json
+zetgrep -input-config httpx.yaml -json ip huge_dump.jsonl > matches.json
 ```
 
 **Real Output (formatted)**:
@@ -70,5 +70,5 @@ field: hash_type
 
 **Command**:
 ```bash
-./zetgrep -tool tools/hash_id.yaml -tools hash_id sec dump.sql
+zetgrep -tool tools/hash_id.yaml -w hash_id sec dump.sql
 ```

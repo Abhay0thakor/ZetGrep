@@ -6,7 +6,7 @@ This guide covers features designed for processing massive datasets (40GB+) and 
 `zetgrep` allows you to chain multiple configuration files. This is useful for maintaining a "Base" config and adding "Project" specific overrides.
 
 ```bash
-./zetgrep -config-file base.yaml -config-file overrides.yaml ip target.txt
+zetgrep -config-file base.yaml -config-file overrides.yaml ip target.txt
 ```
 *   **Strings**: Last occurrence wins.
 *   **Arrays**: Merged (e.g., `ignore_extensions` from both files will be active).
@@ -24,7 +24,7 @@ decode: true    # Unescape characters in the target field
 
 ### 2. Run at Scale
 ```bash
-./zetgrep -input-config input.yaml -all massive_dump.jsonl
+zetgrep -input-config input.yaml -all massive_dump.jsonl
 ```
 
 ## 💎 Output Templating (`-o`)
@@ -41,7 +41,7 @@ Control the exact string printed to the console.
 
 ### Pro Example:
 ```bash
-./zetgrep -tools b64_decode -o "MATCH [{{pattern}}] in {{file}} -> DECODED: {{tool:b64_decode}}" base64 data.txt
+zetgrep -w b64_decode -o "MATCH [{{pattern}}] in {{file}} -> DECODED: {{tool:b64_decode}}" base64 data.txt
 ```
 
 ## 🔄 The "Process" Workflow
@@ -49,9 +49,9 @@ Optimized for very large scans where you don't want to re-read the source file.
 
 1.  **Fast Scan**: Save matches to JSON.
     ```bash
-    ./zetgrep -json -all 40gb_dump.jsonl > matches.json
+    zetgrep -json -all 40gb_dump.jsonl > matches.json
     ```
 2.  **Enrich**: Run tools on the matches later.
     ```bash
-    ./zetgrep -process matches.json -tools ip_info -o "{{file}} | {{tool:ip_info}}"
+    zetgrep -process matches.json -w ip_info -o "{{file}} | {{tool:ip_info}}"
     ```
