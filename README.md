@@ -1,4 +1,4 @@
-# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.4.3)
+# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.4.4)
 
 A professional-grade regex orchestration framework designed for massive reconnaissance data.
 
