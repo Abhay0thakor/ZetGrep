@@ -217,7 +217,7 @@ func LoadPattern(f string) (models.Pattern, error) {
 		return models.Pattern{}, err
 	}
 	if p.Pattern == "" && len(p.Patterns) > 0 {
-		p.Pattern = "(" + strings.Join(p.Patterns, "|") + ")"
+		p.Pattern = strings.Join(p.Patterns, "|")
 	}
 	return p, nil
 }

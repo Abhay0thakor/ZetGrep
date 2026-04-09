@@ -134,6 +134,7 @@ func unescapeContent(s string) string {
 }
 
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
+	if !opts.Silent { fmt.Fprintf(os.Stderr, "%s Detected Format: %s\n", au.Cyan("[DEBUG]"), s.Config.Input.Format) }
 	if s.Config.Input.Format == "jsonl" || s.Config.Input.Format == "json" {
 		return s.RunJSONLScan(ctx, opts)
 	}
@@ -146,6 +147,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 }
 
 func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
+	if !opts.Silent { fmt.Fprintf(os.Stderr, "%s Using Text Scanning Mode\n", au.Cyan("[*]")) }
 	resultChan := make(chan *models.Result, 1000)
 
 	var compiledPatterns []struct {
@@ -155,7 +157,13 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName); if err != nil { continue }
-		if comp, err := regexp.Compile(p.Pattern); err == nil {
+		
+		finalPattern := p.Pattern
+		if strings.Contains(p.Flags, "i") && !strings.HasPrefix(finalPattern, "(?i)") {
+			finalPattern = "(?i)" + finalPattern
+		}
+
+		if comp, err := regexp.Compile(finalPattern); err == nil {
 			compiledPatterns = append(compiledPatterns, struct { p models.Pattern; comp *regexp.Regexp }{p, comp})
 		}
 	}
@@ -187,7 +195,12 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 						if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
 						res := GetResult()
 						res.Pattern = cp.p.Name; res.Content = matchGroup[0]; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(res.Content)
-						if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+						
+						// ONLY filter if explicitly requested
+						if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
+							PutResult(res); continue
+						}
+						if opts.EntropyMode && res.Entropy < 3.5 {
 							PutResult(res); continue
 						}
 						for _, t := range activeTools {
@@ -218,7 +231,7 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 				if path == "-" || path == "stdin" { fileReader = io.NopCloser(os.Stdin)
 				} else { f, err := os.Open(path); if err != nil { continue }; fileReader = f }
 			}
-			scanner := bufio.NewScanner(fileReader); buf := make([]byte, 64*1024); scanner.Buffer(buf, 20*1024*1024)
+			scanner := bufio.NewScanner(fileReader); buf := make([]byte, 1024*1024); scanner.Buffer(buf, 100*1024*1024)
 			var bytesRead int64
 			for scanner.Scan() {
 				text := scanner.Text(); lineCount++
@@ -327,7 +340,10 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 							res.Content = match
 							res.Matches = matchGroup
 							res.Entropy = utils.ShannonEntropy(match)
-							if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+							if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
+								PutResult(res); continue
+							}
+							if opts.EntropyMode && res.Entropy < 3.5 {
 								PutResult(res); continue
 							}
 							for _, t := range activeTools {
@@ -412,7 +428,13 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 	}
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName); if err != nil { continue }
-		if comp, err := regexp.Compile(p.Pattern); err == nil {
+		
+		finalPattern := p.Pattern
+		if strings.Contains(p.Flags, "i") && !strings.HasPrefix(finalPattern, "(?i)") {
+			finalPattern = "(?i)" + finalPattern
+		}
+
+		if comp, err := regexp.Compile(finalPattern); err == nil {
 			compiledPatterns = append(compiledPatterns, struct { p models.Pattern; comp *regexp.Regexp }{p, comp})
 		}
 	}
@@ -551,7 +573,9 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 		var data map[string]interface{}
 		err := json.Unmarshal([]byte(line), &data)
 		if err != nil {
-			logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
+			if s.Config.Input.Format != "text" {
+				logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
+			}
 		} else {
 			logs = append(logs, fmt.Sprintf("%s JSON parsed successfully", au.Green("[SUCCESS]")))
 		}
@@ -580,6 +604,11 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 		var targets []string
 		if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
 		targets = append(targets, s.Config.Input.Targets...)
+
+		// If no targets defined or format is text, default to raw line ($)
+		if len(targets) == 0 || s.Config.Input.Format == "text" {
+			targets = append(targets, "$")
+		}
 
 		for _, targetField := range targets {
 			var content string

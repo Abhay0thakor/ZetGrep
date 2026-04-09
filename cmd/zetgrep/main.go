@@ -171,14 +171,20 @@ func main() {
 		ic = utils.ExpandPath(ic); var inc models.InputConfig; b, _ := os.ReadFile(ic); yaml.Unmarshal(b, &inc)
 		mergeInputConfigs(&finalCfg.Input, inc)
 	}
-	if inputMode != "" { finalCfg.Input.Format = inputMode }
-
-	// Auto-Format Detection
-	if finalCfg.Input.Format == "" && flag.NArg() > 0 {
+	// Final Format Determination (Command-line and Auto-Detection take priority over config)
+	if inputMode != "" {
+		finalCfg.Input.Format = inputMode
+	} else if flag.NArg() > 0 {
 		ext := strings.ToLower(filepath.Ext(flag.Arg(0)))
-		if ext == ".html" || ext == ".js" || ext == ".txt" || ext == ".md" {
+		if ext == ".jsonl" || ext == ".json" {
+			finalCfg.Input.Format = "jsonl"
+		} else if ext == ".csv" {
+			finalCfg.Input.Format = "csv"
+		} else {
 			finalCfg.Input.Format = "text"
 		}
+	} else if finalCfg.Input.Format == "" {
+		finalCfg.Input.Format = "text"
 	}
 
 	svc, err := scanner.NewScannerService(finalCfg)
