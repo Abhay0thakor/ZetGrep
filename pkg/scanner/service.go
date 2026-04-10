@@ -149,6 +149,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	return s.RunTextScan(ctx, opts)
 }
 
+type scanLine struct {
+	text string
+	num  int
+	file string
+}
+
 func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	if !opts.Silent { fmt.Fprintf(os.Stderr, "%s Using Text Scanning Mode\n", au.Cyan("[*]")) }
 	resultChan := make(chan *models.Result, 1000)
@@ -172,7 +178,7 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 	}
 
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	lineChan := make(chan string, 1000)
+	lineChan := make(chan scanLine, 1000)
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() * 2
 
@@ -180,7 +186,8 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for line := range lineChan {
+			for sl := range lineChan {
+				line := sl.text
 				if line == "" { continue }
 				
 				content := line
@@ -198,6 +205,8 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 						if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
 						res := GetResult()
 						res.Pattern = cp.p.Name; res.Content = matchGroup[0]; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(res.Content)
+						res.Line = sl.num
+						res.File = sl.file
 						
 						if opts.Unique {
 							key := res.Pattern + ":" + res.Content
@@ -226,7 +235,7 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 	}
 
 	go func() {
-		var lineCount int
+		var totalLineCount int
 		for _, path := range opts.TargetPaths {
 			var fileReader io.ReadCloser; var totalSize int64
 			if path != "stdin" && path != "-" { if info, err := os.Stat(path); err == nil { totalSize = info.Size() } }
@@ -243,13 +252,14 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 			}
 			scanner := bufio.NewScanner(fileReader); buf := make([]byte, 1024*1024); scanner.Buffer(buf, 100*1024*1024)
 			var bytesRead int64
+			var lineInFileCount int
 			for scanner.Scan() {
-				text := scanner.Text(); lineCount++
+				text := scanner.Text(); totalLineCount++; lineInFileCount++
 				bytesRead += int64(len(text)) + 1
-				select { case <-ctx.Done(): fileReader.Close(); goto done; case lineChan <- text: }
-				if lineCount%500 == 0 && totalSize > 0 && !opts.Silent {
+				select { case <-ctx.Done(): fileReader.Close(); goto done; case lineChan <- scanLine{text: text, num: lineInFileCount, file: path}: }
+				if totalLineCount%500 == 0 && totalSize > 0 && !opts.Silent {
 					pct := (float64(bytesRead) / float64(totalSize)) * 100
-					fmt.Fprintf(os.Stderr, "\r%s Scanning %s: %.1f%% (%d lines)", au.Cyan("[*]"), filepath.Base(path), pct, lineCount)
+					fmt.Fprintf(os.Stderr, "\r%s Scanning %s: %.1f%% (%d lines)", au.Cyan("[*]"), filepath.Base(path), pct, totalLineCount)
 				}
 			}
 			fileReader.Close()
@@ -282,15 +292,15 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 	}
 
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	
+
 	var targets []string
 	if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
 	targets = append(targets, s.Config.Input.Targets...)
-	
+
 	idField := s.Config.Input.ID
 	filters := s.Config.Input.Filters
 
-	lineChan := make(chan string, 1000)
+	lineChan := make(chan scanLine, 1000)
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() * 2
 
@@ -298,7 +308,8 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for line := range lineChan {
+			for sl := range lineChan {
+				line := sl.text
 				if line == "" { continue }
 				var data map[string]interface{}
 				err := json.Unmarshal([]byte(line), &data)
@@ -346,10 +357,12 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 							match := matchGroup[0]
 							res := GetResult()
 							res.Pattern = cp.p.Name
-							res.File = idVal
 							res.Content = match
 							res.Matches = matchGroup
 							res.Entropy = utils.ShannonEntropy(match)
+							res.Line = sl.num
+							res.File = sl.file
+							if idVal != "unknown" { res.File += ":" + idVal }
 
 							if opts.Unique {
 								key := res.Pattern + ":" + res.Content
@@ -403,7 +416,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 				}
 			}
 			scanner := bufio.NewScanner(fileReader)
-			buf := make([]byte, 64*1024); scanner.Buffer(buf, 20*1024*1024)
+			buf := make([]byte, 1024*1024); scanner.Buffer(buf, 100*1024*1024)
 			var bytesRead int64
 			for scanner.Scan() {
 				text := scanner.Text(); lineCount++
@@ -411,7 +424,7 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 				if opts.ResumeFile != "" && i == s.Resume.FileIndex && lineCount <= s.Resume.LineIndex { continue }
 				select {
 				case <-ctx.Done(): fileReader.Close(); goto done
-				case lineChan <- text:
+				case lineChan <- scanLine{text: text, num: lineCount, file: path}:
 				}
 				if lineCount%100 == 0 {
 					if totalSize > 0 && !opts.Silent {
@@ -459,14 +472,15 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 	activeTools := s.getActiveTools(opts.ToolIDs)
 	separator := s.Config.Input.CSVConfig.Separator; if separator == "" { separator = "," }
 	idIdx := s.Config.Input.CSVConfig.IDIndex; targetIdxs := s.Config.Input.CSVConfig.TargetIdx
-	recordChan := make(chan []string, 1000)
+	recordChan := make(chan struct { rec []string; num int; file string }, 1000)
 	var wg sync.WaitGroup
 	numWorkers := runtime.NumCPU() * 2
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for record := range recordChan {
+			for sr := range recordChan {
+				record := sr.rec
 				currentTargets := targetIdxs
 				if len(currentTargets) == 0 { for idx := range record { currentTargets = append(currentTargets, idx) } }
 				idVal := "unknown"; if idIdx < len(record) { idVal = record[idIdx] }
@@ -478,8 +492,22 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 						for _, matchGroup := range matches {
 							if len(matchGroup) == 0 || matchGroup[0] == "" { continue }
 							match := matchGroup[0]; res := GetResult()
-							res.Pattern = cp.p.Name; res.File = idVal; res.Content = match; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(match)
-							if (opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest") || (opts.EntropyMode && res.Entropy < 3.5) {
+							res.Pattern = cp.p.Name; res.Content = match; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(match)
+							res.Line = sr.num
+							res.File = sr.file
+							if idVal != "unknown" { res.File += ":" + idVal }
+							
+							if opts.Unique {
+								key := res.Pattern + ":" + res.Content
+								if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
+									PutResult(res); continue
+								}
+							}
+
+							if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
+								PutResult(res); continue
+							}
+							if opts.EntropyMode && res.Entropy < 3.5 {
 								PutResult(res); continue
 							}
 							for _, t := range activeTools {
@@ -501,7 +529,9 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 			if path == "-" || path == "stdin" { fileReader = io.NopCloser(os.Stdin)
 			} else { f, err := os.Open(path); if err != nil { continue }; fileReader = f }
 			reader := csv.NewReader(fileReader); reader.Comma = rune(separator[0]); reader.LazyQuotes = true
-			if s.Config.Input.CSVConfig.HasHeader { reader.Read() }
+			if s.Config.Input.CSVConfig.HasHeader { 
+				_, _ = reader.Read() 
+			}
 			var bytesRead int64; var rowCount int
 			for {
 				record, err := reader.Read(); if err == io.EOF { break }; if err != nil { continue }
@@ -511,7 +541,7 @@ func (s *ScannerService) RunCSVScan(ctx context.Context, opts ScannerOptions) (<
 					pct := (float64(bytesRead) / float64(totalSize)) * 100; if pct > 100 { pct = 100 }
 					fmt.Fprintf(os.Stderr, "\r%s Scanning CSV %s: %.1f%%", au.Cyan("[*]"), filepath.Base(path), pct)
 				}
-				select { case <-ctx.Done(): fileReader.Close(); goto done; case recordChan <- record: }
+				select { case <-ctx.Done(): fileReader.Close(); goto done; case recordChan <- struct { rec []string; num int; file string }{rec: record, num: rowCount, file: path}: }
 			}
 			fileReader.Close()
 			if !opts.Silent && totalSize > 0 { fmt.Fprintf(os.Stderr, "\r%s Scanned CSV %s: 100%%          \n", au.Green("[+]"), filepath.Base(path)) }

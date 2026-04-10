@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version = "v0.4.5"
+	version = "v0.4.6"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
