@@ -21,7 +21,7 @@ import (
 )
 
 const (
-	version = "v0.4.4"
+	version = "v0.4.5"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -59,6 +59,7 @@ func main() {
 		patternsDir string
 		toolsDir    string
 		allMode     bool
+		uniqueMode  bool
 		smartMode   bool
 		entropyMode bool
 		diagnose    string
@@ -89,6 +90,8 @@ func main() {
 	flag.StringVar(&patternsDir, "pd", "", "patterns directory")
 	flag.StringVar(&toolsDir, "td", "", "tools directory")
 	flag.BoolVar(&allMode, "all", false, "run all patterns")
+	flag.BoolVar(&uniqueMode, "unique", false, "deduplicate matches")
+	flag.BoolVar(&uniqueMode, "u", false, "alias for -unique")
 	flag.BoolVar(&smartMode, "smart", false, "AI interest filtering")
 	flag.BoolVar(&entropyMode, "entropy", false, "high-entropy filtering")
 	flag.StringVar(&diagnose, "diagnose", "", "diagnose a single line")
@@ -117,7 +120,7 @@ func main() {
 		groups := map[string][]string{
 			"INPUT": {"input-config", "im", "l", "stdin"},
 			"CONFIG": {"config-file", "tool", "pd", "td"},
-			"FILTER": {"all", "smart", "entropy", "diagnose", "dignose", "tags"},
+			"FILTER": {"all", "unique", "smart", "entropy", "diagnose", "dignose", "tags"},
 			"OUTPUT": {"json", "report", "o", "silent", "verbose", "no-color"},
 			"LOGIC": {"web", "w", "workflow", "process", "resume", "rewrite", "update", "version", "list", "health-check"},
 		}
@@ -171,6 +174,7 @@ func main() {
 		ic = utils.ExpandPath(ic); var inc models.InputConfig; b, _ := os.ReadFile(ic); yaml.Unmarshal(b, &inc)
 		mergeInputConfigs(&finalCfg.Input, inc)
 	}
+	
 	// Final Format Determination (Command-line and Auto-Detection take priority over config)
 	if inputMode != "" {
 		finalCfg.Input.Format = inputMode
@@ -248,7 +252,7 @@ func main() {
 	} else {
 		resultChan, _ = svc.RunScan(ctx, scanner.ScannerOptions{
 			TargetPaths: targets, Patterns: runPats, Tags: tags, ToolIDs: activeToolIDs,
-			SmartMode: smartMode, EntropyMode: entropyMode, ResumeFile: resumeFile, Silent: silent,
+			SmartMode: smartMode, EntropyMode: entropyMode, Unique: uniqueMode, ResumeFile: resumeFile, Silent: silent,
 		})
 	}
 

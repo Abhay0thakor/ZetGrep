@@ -28,6 +28,7 @@ type ScannerOptions struct {
 	ToolIDs     []string
 	SmartMode   bool
 	EntropyMode bool
+	Unique      bool
 	ResumeFile  string
 	Silent      bool
 }
@@ -39,6 +40,7 @@ type ScannerService struct {
 	Classifier   *classifier.Classifier
 	Tools        []models.Tool
 	patternCache sync.Map
+	seenMatches  sync.Map
 	processSem chan struct{}
 	Resume     models.ResumeConfig
 }
@@ -69,6 +71,7 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 		Classifier:   classifier.DefaultClassifier(),
 		Tools:        LoadToolsFrom(cfg.ToolsDir),
 		patternCache: sync.Map{},
+		seenMatches:  sync.Map{},
 		processSem:   make(chan struct{}, maxProc),
 	}, nil
 }
@@ -196,6 +199,13 @@ func (s *ScannerService) RunTextScan(ctx context.Context, opts ScannerOptions) (
 						res := GetResult()
 						res.Pattern = cp.p.Name; res.Content = matchGroup[0]; res.Matches = matchGroup; res.Entropy = utils.ShannonEntropy(res.Content)
 						
+						if opts.Unique {
+							key := res.Pattern + ":" + res.Content
+							if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
+								PutResult(res); continue
+							}
+						}
+
 						// ONLY filter if explicitly requested
 						if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
 							PutResult(res); continue
@@ -340,6 +350,14 @@ func (s *ScannerService) RunJSONLScan(ctx context.Context, opts ScannerOptions) 
 							res.Content = match
 							res.Matches = matchGroup
 							res.Entropy = utils.ShannonEntropy(match)
+
+							if opts.Unique {
+								key := res.Pattern + ":" + res.Content
+								if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
+									PutResult(res); continue
+								}
+							}
+
 							if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
 								PutResult(res); continue
 							}
