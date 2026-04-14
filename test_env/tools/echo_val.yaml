@@ -1,0 +1,5 @@
+id: echo_val
+name: Echo Value
+description: Echos the match
+command: "echo 'EXTRACTED: {{match}}'"
+field: echoed

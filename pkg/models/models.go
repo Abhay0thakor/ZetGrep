@@ -79,13 +79,13 @@ type Globals struct {
 }
 
 type InputConfig struct {
-	Format     string            `json:"format" yaml:"format"`   // "jsonl", "json", "csv"
-	PreProcess string            `json:"pre_process" yaml:"pre_process"` // Command to run on input (e.g. js-beautify)
-	Target     string            `json:"target" yaml:"target"`   // Legacy single target
-	Targets   []string          `json:"targets" yaml:"targets"` // Multiple fields to scan
-	ID        string            `json:"id" yaml:"id"`           // Source identifier field
-	Decode      bool              `json:"decode" yaml:"decode"`   // Unescape target content
-	Filters     map[string]string `json:"filters" yaml:"filters"` // Conditional matching (e.g. status: "200")
+	Format      string            `json:"format" yaml:"format"`             // "jsonl", "json", "csv"
+	PreProcess  string            `json:"pre_process" yaml:"pre_process"`   // Command to run on input (e.g. js-beautify)
+	Target      string            `json:"target" yaml:"target"`             // Legacy single target
+	Targets     []string          `json:"targets" yaml:"targets"`           // Multiple fields to scan
+	ID          string            `json:"id" yaml:"id"`                     // Source identifier field
+	Decode      bool              `json:"decode" yaml:"decode"`             // Unescape target content
+	Filters     map[string]string `json:"filters" yaml:"filters"`           // Conditional matching (e.g. status: "200")
 	PostProcess map[string]string `json:"post_process" yaml:"post_process"` // Field-specific commands
 	CSVConfig   CSVConfig         `json:"csv_config" yaml:"csv_config"`
 }
@@ -114,7 +114,7 @@ func (t *Tool) Execute(res Result) (string, error) {
 			return "", nil
 		}
 	}
-	
+
 	cmdStr := t.Command
 	// Core Variables
 	cmdStr = strings.ReplaceAll(cmdStr, "{{extracted}}", extracted)
@@ -124,7 +124,7 @@ func (t *Tool) Execute(res Result) (string, error) {
 	cmdStr = strings.ReplaceAll(cmdStr, "{{line}}", fmt.Sprintf("%d", res.Line))
 	cmdStr = strings.ReplaceAll(cmdStr, "{{pattern}}", res.Pattern)
 	cmdStr = strings.ReplaceAll(cmdStr, "{{ext}}", res.Ext)
-	
+
 	// Indexed Matches (e.g., {{match[0]}}, {{match[1]}})
 	for i, m := range res.Matches {
 		placeholder := fmt.Sprintf("{{match[%d]}}", i)
@@ -138,7 +138,7 @@ func (t *Tool) Execute(res Result) (string, error) {
 		placeholderLabel := fmt.Sprintf("{{tool:%s}}", td.Label)
 		cmdStr = strings.ReplaceAll(cmdStr, placeholderLabel, td.Value)
 	}
-	
+
 	// Create context with timeout for tool execution
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()

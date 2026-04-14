@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -39,6 +40,20 @@ func NewServer(addr string, svc *scanner.ScannerService) *Server {
 func GetStaticFS() fs.FS {
 	sub, _ := fs.Sub(staticFS, "web/static")
 	return sub
+}
+
+func (s *Server) jsonResponse(w http.ResponseWriter, status int, data interface{}) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	if data != nil {
+		if err := json.NewEncoder(w).Encode(data); err != nil {
+			slog.Error("Failed to encode JSON response", "error", err)
+		}
+	}
+}
+
+func (s *Server) errorResponse(w http.ResponseWriter, status int, message string) {
+	s.jsonResponse(w, status, map[string]string{"error": message})
 }
 
 func (s *Server) Start() error {
@@ -85,112 +100,177 @@ func (s *Server) handleStats(w http.ResponseWriter, r *http.Request) {
 		"num_cpu":    runtime.NumCPU(),
 		"goroutines": runtime.NumGoroutine(),
 	}
-	json.NewEncoder(w).Encode(stats)
+	s.jsonResponse(w, http.StatusOK, stats)
 }
 
 func (s *Server) handlePatterns(w http.ResponseWriter, r *http.Request) {
-	p, _ := scanner.GetPatterns(s.svc.Config.PatternsDir)
-	json.NewEncoder(w).Encode(p)
+	p, err := scanner.GetPatterns(s.svc.Config.PatternsDir)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to get patterns")
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, p)
 }
 
 func (s *Server) handleSavePattern(w http.ResponseWriter, r *http.Request) {
 	var p models.Pattern
 	if err := json.NewDecoder(r.Body).Decode(&p); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 	name := r.URL.Query().Get("name")
 	if name == "" {
-		http.Error(w, "name required", http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Parameter 'name' is required")
+		return
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "/") {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid pattern name")
 		return
 	}
 	path := filepath.Join(s.svc.Config.PatternsDir, name+".json")
-	b, _ := json.MarshalIndent(p, "", "  ")
-	if err := os.WriteFile(path, b, 0644); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+	b, err := json.MarshalIndent(p, "", "  ")
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to encode pattern")
 		return
 	}
-	w.WriteHeader(http.StatusOK)
+	if err := os.WriteFile(path, b, 0644); err != nil {
+		slog.Error("Failed to save pattern", "path", path, "error", err)
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to save pattern file")
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleDeletePattern(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
+	if name == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Parameter 'name' is required")
+		return
+	}
+	if strings.Contains(name, "..") || strings.Contains(name, "/") {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid pattern name")
+		return
+	}
 	path := filepath.Join(s.svc.Config.PatternsDir, name+".json")
-	os.Remove(path)
-	w.WriteHeader(http.StatusOK)
+	if err := os.Remove(path); err != nil {
+		slog.Error("Failed to delete pattern", "path", path, "error", err)
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete pattern file")
+		return
+	}
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleTools(w http.ResponseWriter, r *http.Request) {
-	json.NewEncoder(w).Encode(s.svc.Tools)
+	s.jsonResponse(w, http.StatusOK, s.svc.Tools)
 }
 
 func (s *Server) handleSaveTool(w http.ResponseWriter, r *http.Request) {
 	var t models.Tool
 	if err := json.NewDecoder(r.Body).Decode(&t); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 	if t.ID == "" {
-		http.Error(w, "ID required", http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Tool ID is required")
+		return
+	}
+	if strings.Contains(t.ID, "..") || strings.Contains(t.ID, "/") {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid tool ID")
 		return
 	}
 	path := filepath.Join(s.svc.Config.ToolsDir, t.ID+".yaml")
-	b, _ := yaml.Marshal(t)
+	b, err := yaml.Marshal(t)
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to encode tool")
+		return
+	}
 	if err := os.WriteFile(path, b, 0644); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.Error("Failed to save tool", "path", path, "error", err)
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to save tool file")
 		return
 	}
 	// Reload tools in service
-	s.svc.Tools = scanner.LoadToolsFrom(s.svc.Config.ToolsDir)
-	w.WriteHeader(http.StatusOK)
+	s.svc.Tools, _ = scanner.LoadToolsFrom(s.svc.Config.ToolsDir)
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleDeleteTool(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 	if id == "" {
-		http.Error(w, "id required", http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Parameter 'id' is required")
+		return
+	}
+	if strings.Contains(id, "..") || strings.Contains(id, "/") {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid tool ID")
 		return
 	}
 	path := filepath.Join(s.svc.Config.ToolsDir, id+".yaml")
-	os.Remove(path)
-	s.svc.Tools = scanner.LoadToolsFrom(s.svc.Config.ToolsDir)
-	w.WriteHeader(http.StatusOK)
+	if err := os.Remove(path); err != nil {
+		slog.Error("Failed to delete tool", "path", path, "error", err)
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to delete tool file")
+		return
+	}
+	s.svc.Tools, _ = scanner.LoadToolsFrom(s.svc.Config.ToolsDir)
+	s.jsonResponse(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
 func (s *Server) handleRunTool(w http.ResponseWriter, r *http.Request) {
 	tid := r.URL.Query().Get("id")
+	if tid == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Parameter 'id' is required")
+		return
+	}
 	var res models.Result
 	if err := json.NewDecoder(r.Body).Decode(&res); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		s.errorResponse(w, http.StatusBadRequest, "Invalid JSON body")
 		return
 	}
 	for _, t := range s.svc.Tools {
 		if t.ID == tid {
-			val, _ := t.Execute(res)
-			json.NewEncoder(w).Encode(models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+			val, err := t.Execute(res)
+			if err != nil {
+				s.errorResponse(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+			s.jsonResponse(w, http.StatusOK, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
 			return
 		}
 	}
+	s.errorResponse(w, http.StatusNotFound, "Tool not found")
 }
 
 func (s *Server) handleHistory(w http.ResponseWriter, r *http.Request) {
 	cwd, _ := os.Getwd()
-	files, _ := filepath.Glob(filepath.Join(cwd, "results", "*.json"))
+	files, err := filepath.Glob(filepath.Join(cwd, "results", "*.json"))
+	if err != nil {
+		s.errorResponse(w, http.StatusInternalServerError, "Failed to list history")
+		return
+	}
 	var h []string
 	for _, f := range files {
 		h = append(h, filepath.Base(f))
 	}
-	json.NewEncoder(w).Encode(h)
+	s.jsonResponse(w, http.StatusOK, h)
 }
 
 func (s *Server) handleLoadHistory(w http.ResponseWriter, r *http.Request) {
 	cwd, _ := os.Getwd()
 	f := r.URL.Query().Get("file")
-	b, err := os.ReadFile(filepath.Join(cwd, "results", f))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusNotFound)
+	if f == "" {
+		s.errorResponse(w, http.StatusBadRequest, "Parameter 'file' is required")
 		return
 	}
+	if strings.Contains(f, "..") || strings.Contains(f, "/") {
+		s.errorResponse(w, http.StatusBadRequest, "Invalid filename")
+		return
+	}
+	path := filepath.Join(cwd, "results", f)
+	b, err := os.ReadFile(path)
+	if err != nil {
+		s.errorResponse(w, http.StatusNotFound, "History file not found")
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
 	w.Write(b)
 }
 
@@ -282,6 +362,13 @@ func (s *Server) handleLs(w http.ResponseWriter, r *http.Request) {
 	if path == "" {
 		path = "."
 	}
+	
+	// Basic Path Traversal Protection
+	if strings.Contains(path, "..") {
+		http.Error(w, "invalid path", http.StatusBadRequest)
+		return
+	}
+
 	dir := filepath.Dir(path)
 	base := filepath.Base(path)
 	if strings.HasSuffix(path, "/") || path == "." {

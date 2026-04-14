@@ -1,0 +1,1 @@
+[{"id":0,"pattern":"any","file":"abc.txt","line":1,"content":"ABC-DEF-GHI","matches":["ABC-DEF-GHI"],"entropy":3.277613436819116}]

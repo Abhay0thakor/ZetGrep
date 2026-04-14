@@ -1,0 +1,5 @@
+id: rev_str
+name: Reverse String
+description: Reverses the match
+command: "echo '{{match}}' | rev"
+field: reversed

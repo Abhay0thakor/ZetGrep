@@ -29,9 +29,9 @@ func TestScannerService_RunJSONLScan(t *testing.T) {
 	cfg := models.Config{
 		PatternsDir: tmpDir,
 		Input: models.InputConfig{
-			Format: "jsonl",
+			Format:  "jsonl",
 			Targets: []string{"data"},
-			ID: "id",
+			ID:      "id",
 		},
 	}
 
@@ -51,7 +51,7 @@ func TestScannerService_RunJSONLScan(t *testing.T) {
 		Patterns:    []string{"ip"},
 	}
 
-	resChan, err := svc.RunJSONLScan(context.Background(), opts)
+	resChan, err := svc.RunScan(context.Background(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -67,7 +67,9 @@ func TestScannerService_RunJSONLScan(t *testing.T) {
 
 	found := make(map[string]string)
 	for _, r := range results {
-		found[r.File] = r.Content
+		parts := strings.Split(r.File, ":")
+		id := parts[len(parts)-1]
+		found[id] = r.Content
 	}
 
 	if found["test1"] != "1.1.1.1" {
@@ -80,7 +82,9 @@ func TestScannerService_RunJSONLScan(t *testing.T) {
 
 func TestScannerService_RunCSVScan(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "zetgrep-csv-test-*")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(tmpDir)
 
 	pattern := models.Pattern{Name: "ip", Pattern: `\d+\.\d+\.\d+\.\d+`}
@@ -90,7 +94,7 @@ func TestScannerService_RunCSVScan(t *testing.T) {
 	cfg := models.Config{
 		PatternsDir: tmpDir,
 		Input: models.InputConfig{
-			Format: "csv",
+			Format:    "csv",
 			CSVConfig: models.CSVConfig{Separator: ",", IDIndex: 0, TargetIdx: []int{1}},
 		},
 	}
@@ -100,16 +104,25 @@ func TestScannerService_RunCSVScan(t *testing.T) {
 	os.WriteFile(csvFile, []byte("id1,1.2.3.4\nid2,no-ip\nid3,5.6.7.8"), 0644)
 
 	opts := ScannerOptions{TargetPaths: []string{csvFile}, Patterns: []string{"ip"}}
-	resChan, _ := svc.RunCSVScan(context.Background(), opts)
+	resChan, err := svc.RunScan(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	count := 0
-	for range resChan { count++ }
-	if count != 2 { t.Errorf("expected 2 results, got %d", count) }
+	for range resChan {
+		count++
+	}
+	if count != 2 {
+		t.Errorf("expected 2 results, got %d", count)
+	}
 }
 
 func TestScannerService_RunTextScan(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "zetgrep-text-test-*")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(tmpDir)
 
 	pattern := models.Pattern{Name: "ip", Pattern: `\d+\.\d+\.\d+\.\d+`}
@@ -123,16 +136,25 @@ func TestScannerService_RunTextScan(t *testing.T) {
 	os.WriteFile(textFile, []byte("some text with 1.2.3.4\nand another 5.6.7.8"), 0644)
 
 	opts := ScannerOptions{TargetPaths: []string{textFile}, Patterns: []string{"ip"}}
-	resChan, _ := svc.RunTextScan(context.Background(), opts)
+	resChan, err := svc.RunScan(context.Background(), opts)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	count := 0
-	for range resChan { count++ }
-	if count != 2 { t.Errorf("expected 2 results, got %d", count) }
+	for range resChan {
+		count++
+	}
+	if count != 2 {
+		t.Errorf("expected 2 results, got %d", count)
+	}
 }
 
 func TestScannerService_DiagnoseLine(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "zetgrep-diag-test-*")
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer os.RemoveAll(tmpDir)
 
 	pattern := models.Pattern{Name: "ip", Pattern: `\d+\.\d+\.\d+\.\d+`}

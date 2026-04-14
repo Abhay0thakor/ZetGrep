@@ -1,0 +1,6 @@
+format: jsonl
+targets:
+  - url
+  - headers
+  - body
+id: url

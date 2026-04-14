@@ -1,0 +1,6 @@
+format: jsonl
+targets:
+  - request.endpoint
+  - response.headers
+  - response.body
+id: request.endpoint
