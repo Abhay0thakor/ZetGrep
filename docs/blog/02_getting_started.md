@@ -27,16 +27,16 @@ Now, ZetGrep has the "brains" to find secrets, IPs, and more.
 
 ## Your First Power Scan
 
-Let's say you have a list of subdomains and you want to find every IP address mentioned.
+Let's say you have a list of subdomains and you want to find every IP address mentioned. The `scan` keyword is optional; ZetGrep defaults to scanning if no other command is provided.
 
 ### The Basic Way:
 ```bash
-zetgrep scan ip subdomains.txt
+zetgrep ip subdomains.txt
 ```
 
 ### The Professional Way (Piped & Formatted):
 ```bash
-subfinder -d target.com -silent | zetgrep scan ip --stdin --format table
+subfinder -d target.com -silent | zetgrep ip --stdin --format table
 ```
 
 ### Why this is better:

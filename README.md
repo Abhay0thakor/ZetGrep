@@ -45,24 +45,26 @@ zetgrep list
 ```
 
 ### 2. Standard Pattern Scan
+The `scan` keyword is optional for default behavior.
+
 ```bash
 # Scan a directory using a specific pattern
-zetgrep scan aws-keys ./data
+zetgrep aws-keys ./data
 
 # Scan everything using all patterns
-zetgrep scan --all ./data
+zetgrep --all ./data
 ```
 
 ### 3. Pipeline Integration (The Power User Way)
 ```bash
 # Combine with subfinder and httpx for deep secret hunting
-subfinder -d target.com -silent | httpx -json -silent | zetgrep scan --all -f jsonl
+subfinder -d target.com -silent | httpx -json -silent | zetgrep --all -f jsonl
 ```
 
 ### 4. Tool Chaining & Workflow
 ```bash
 # Extract IP -> Run custom tool -> Output Table
-zetgrep scan ip --workflow ip_info --format table data.txt
+zetgrep ip --workflow ip_info --format table data.txt
 ```
 
 ---
