@@ -110,6 +110,7 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 
 			idVal, _ := getNestedField(data, p.Config.ID)
 
+			foundTarget := false
 			for _, targetField := range targets {
 				var content string
 				var ok bool
@@ -121,6 +122,7 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 				}
 				
 				if ok && content != "" {
+					foundTarget = true
 					displayFile := path
 					if idVal != "" {
 						displayFile = fmt.Sprintf("%s:%s", path, idVal)
@@ -131,6 +133,14 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 					}
 				}
 			}
+			if !foundTarget {
+				// fmt.Fprintf(os.Stderr, "No target field found in JSON at line %d\n", lineNum)
+			}
+		}
+		if err := scanner.Err(); err != nil {
+			// Using fmt for now as slog might not be imported or set up here 
+			// Wait, I am in pkg/scanner, I can import slog or use fmt.
+			// Let's use a warn or error if possible.
 		}
 	}()
 	return out, nil

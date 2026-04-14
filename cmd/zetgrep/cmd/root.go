@@ -195,9 +195,20 @@ var rootCmd = &cobra.Command{
 				targets = append(targets, utils.ExpandPath(s.Text()))
 			}
 			f.Close()
-		} else if len(args) > 1 {
-			for _, arg := range args[1:] {
-				targets = append(targets, utils.ExpandPath(arg))
+		} else {
+			// Smarter positional argument handling
+			if allMode || len(tags) > 0 || processFile != "" {
+				// If we don't need a pattern argument, all positional args are targets
+				for _, arg := range args {
+					targets = append(targets, utils.ExpandPath(arg))
+				}
+			} else {
+				// First arg is pattern, rest are targets
+				if len(args) > 1 {
+					for _, arg := range args[1:] {
+						targets = append(targets, utils.ExpandPath(arg))
+					}
+				}
 			}
 		}
 		if len(targets) == 0 {
@@ -286,7 +297,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&stdin, "stdin", false, "read targets from stdin")
 	rootCmd.PersistentFlags().StringVar(&inputMode, "im", "", "input mode (jsonl, csv, text)")
 	rootCmd.PersistentFlags().StringSliceVar(&toolFiles, "tool", nil, "path to tool YAML")
-	rootCmd.PersistentFlags().BoolVar(&allMode, "all", false, "run all patterns")
+	rootCmd.PersistentFlags().BoolVarP(&allMode, "all", "a", false, "run all patterns")
 	rootCmd.PersistentFlags().BoolVarP(&uniqueMode, "unique", "u", false, "deduplicate matches")
 	rootCmd.PersistentFlags().BoolVar(&smartMode, "smart", false, "AI interest filtering")
 	rootCmd.PersistentFlags().BoolVar(&entropyMode, "entropy", false, "high-entropy filtering")
