@@ -197,25 +197,28 @@ var rootCmd = &cobra.Command{
 			}
 			s := bufio.NewScanner(f)
 			for s.Scan() {
-				targets = append(targets, utils.ExpandPath(s.Text()))
+				if t := strings.TrimSpace(s.Text()); t != "" {
+					targets = append(targets, utils.ExpandPath(t))
+				}
 			}
 			f.Close()
 		} else {
-			// Smarter positional argument handling
-			if allMode || len(tags) > 0 || processFile != "" {
-				// If we don't need a pattern argument, all positional args are targets
-				for _, arg := range args {
-					targets = append(targets, utils.ExpandPath(arg))
-				}
-			} else {
-				// First arg is pattern, rest are targets
+			// Determine which arguments are targets
+			targetArgs := args
+			if !allMode && len(tags) == 0 && processFile == "" {
+				// First arg is pattern, so targets start from index 1
 				if len(args) > 1 {
-					for _, arg := range args[1:] {
-						targets = append(targets, utils.ExpandPath(arg))
-					}
+					targetArgs = args[1:]
+				} else {
+					targetArgs = []string{}
 				}
 			}
+			
+			for _, arg := range targetArgs {
+				targets = append(targets, utils.ExpandPath(arg))
+			}
 		}
+
 		if len(targets) == 0 {
 			targets = []string{"."}
 		}

@@ -1,4 +1,4 @@
-# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.4.6)
+# <img src="logo.svg" width="40" height="40" align="center"> ZetGrep (v0.5.3)
 
 A professional-grade regex orchestration framework designed for massive reconnaissance data.
 
@@ -13,16 +13,24 @@ A professional-grade regex orchestration framework designed for massive reconnai
 - **Modern CLI Architecture**: Powered by Cobra with dedicated subcommands (`scan`, `web`, `diagnose`, `list`).
 - **Unified Configuration**: Robust management with Viper (Config files, Env Vars, Defaults).
 - **Deep Orchestration**: Chain external tools dynamically using `{{tool:ID}}` placeholders.
+- **Compressed Data Support**: Stream directly from `zstd`, `gzip`, etc. using `--pre-process`.
 - **High-Performance Streaming**: Process 100GB+ files with minimal RAM using a unified concurrent engine.
 - **Multiple Formats**: Native support for JSONL, CSV, and raw Text data.
 - **Stateful Resume**: Never lose progress on massive scans (`--resume`).
 - **Library of 50+ Patterns**: Built-in intelligence for secrets, cloud keys, and more.
+...
+### 4. Tool Chaining & Workflow
+```bash
+# Extract IP -> Run custom tool -> Output Table
+zetgrep ip --workflow ip_info --format table data.txt
+```
 
----
+### 5. Scanning Compressed Data
+```bash
+# Scan a zstd compressed log without decompressing to disk
+zetgrep ip access.log.zst --pre-process "zstd -dc"
+```
 
-## 🛠️ Installation
-
-### From Source
 ```bash
 go install github.com/Abhay0thakor/ZetGrep/cmd/zetgrep@latest
 ```

@@ -78,13 +78,30 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 			targets = []string{"$"} // Default to whole line if no targets
 		}
 
+		// Pre-split target paths
+		splitTargets := make([][]string, len(targets))
+		for i, t := range targets {
+			if t != "$" {
+				splitTargets[i] = strings.Split(t, ".")
+			}
+		}
+		
+		splitID := strings.Split(p.Config.ID, ".")
+		if p.Config.ID == "" {
+			splitID = nil
+		}
+
+		// Pre-split filter paths
+		filterParts := make(map[string][]string)
+		for field := range p.Config.Filters {
+			filterParts[field] = strings.Split(field, ".")
+		}
+
 		for scanner.Scan() {
 			lineNum++
 			line := scanner.Text()
 			var data map[string]interface{}
 			if err := json.Unmarshal([]byte(line), &data); err != nil {
-				// If not JSON, but we are in JSONL mode, skip or treat as text?
-				// For now, let's treat whole line as content if it's the only target
 				for _, t := range targets {
 					if t == "$" {
 						select {
@@ -99,7 +116,7 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 			// Check filters
 			matchFilters := true
 			for field, val := range p.Config.Filters {
-				if v, ok := getNestedField(data, field); !ok || v != val {
+				if v, ok := getNestedFieldSplit(data, filterParts[field]); !ok || v != val {
 					matchFilters = false
 					break
 				}
@@ -108,21 +125,19 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 				continue
 			}
 
-			idVal, _ := getNestedField(data, p.Config.ID)
+			idVal, _ := getNestedFieldSplit(data, splitID)
 
-			foundTarget := false
-			for _, targetField := range targets {
+			for i, targetField := range targets {
 				var content string
 				var ok bool
 				if targetField == "$" {
 					content = line
 					ok = true
 				} else {
-					content, ok = getNestedField(data, targetField)
+					content, ok = getNestedFieldSplit(data, splitTargets[i])
 				}
 				
 				if ok && content != "" {
-					foundTarget = true
 					displayFile := path
 					if idVal != "" {
 						displayFile = fmt.Sprintf("%s:%s", path, idVal)
@@ -133,14 +148,6 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 					}
 				}
 			}
-			if !foundTarget {
-				// fmt.Fprintf(os.Stderr, "No target field found in JSON at line %d\n", lineNum)
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			// Using fmt for now as slog might not be imported or set up here 
-			// Wait, I am in pkg/scanner, I can import slog or use fmt.
-			// Let's use a warn or error if possible.
 		}
 	}()
 	return out, nil
@@ -208,10 +215,9 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 	return out, nil
 }
 
-// getNestedField is a helper moved from service.go or models.go
-func getNestedField(data map[string]interface{}, path string) (string, bool) {
-	if path == "" { return "", false }
-	parts := strings.Split(path, ".")
+// getNestedFieldSplit uses pre-split parts for speed
+func getNestedFieldSplit(data map[string]interface{}, parts []string) (string, bool) {
+	if len(parts) == 0 { return "", false }
 	var current interface{} = data
 	for _, part := range parts {
 		if m, ok := current.(map[string]interface{}); ok {
@@ -232,3 +238,9 @@ func getNestedField(data map[string]interface{}, path string) (string, bool) {
 
 	return val, true
 }
+
+func getNestedField(data map[string]interface{}, path string) (string, bool) {
+	if path == "" { return "", false }
+	return getNestedFieldSplit(data, strings.Split(path, "."))
+}
+

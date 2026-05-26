@@ -197,7 +197,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 				// Post-process usually applies to the whole content if not specified
 				// For unified, we check if there's a post-process for the specific field or "$"
-				// This part might need more tuning to match exact old behavior
 				postCmd := ""
 				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok {
 					postCmd = cmd
@@ -206,9 +205,14 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 
 				if postCmd != "" {
-					cmd := exec.CommandContext(ctx, "bash", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+postCmd)
+					var cmd *exec.Cmd
+					if runtime.GOOS == "windows" {
+						cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+content+" | "+postCmd)
+					} else {
+						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+postCmd)
+					}
 					if out, err := cmd.Output(); err == nil {
-						content = string(out)
+						content = strings.TrimSpace(string(out))
 					}
 				}
 
