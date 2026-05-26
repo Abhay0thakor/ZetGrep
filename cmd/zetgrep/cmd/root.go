@@ -61,6 +61,7 @@ var (
 	concurrency    int
 	dryRun         bool
 	format         string
+	patternFlag    string
 	targetField    string
 	targetFields   []string
 	preProcess     string
@@ -205,8 +206,32 @@ var rootCmd = &cobra.Command{
 		} else {
 			// Determine which arguments are targets
 			targetArgs := args
-			if !allMode && len(tags) == 0 && processFile == "" {
-				// First arg is pattern, so targets start from index 1
+			
+			// Smart Swap Logic: If user provides <target> <pattern> instead of <pattern> <target>
+			if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" && len(args) >= 2 {
+				firstExists := false
+				if _, err := os.Stat(utils.ExpandPath(args[0])); err == nil {
+					firstExists = true
+				}
+				lastExists := false
+				if _, err := os.Stat(utils.ExpandPath(args[len(args)-1])); err == nil {
+					lastExists = true
+				}
+
+				// If first is a file and last isn't, assume last is the pattern
+				if firstExists && !lastExists {
+					patternFlag = args[len(args)-1]
+					targetArgs = args[:len(args)-1]
+				} else {
+					// Default: First arg is pattern
+					if len(args) > 1 {
+						targetArgs = args[1:]
+					} else {
+						targetArgs = []string{}
+					}
+				}
+			} else if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" {
+				// Single arg or other cases
 				if len(args) > 1 {
 					targetArgs = args[1:]
 				} else {
@@ -232,7 +257,9 @@ var rootCmd = &cobra.Command{
 		}
 
 		var runPats []string
-		if allMode {
+		if patternFlag != "" {
+			runPats = []string{patternFlag}
+		} else if allMode {
 			var err error
 			runPats, err = scanner.GetPatterns(svc.Config.PatternsDir)
 			if err != nil {
@@ -321,7 +348,8 @@ func init() {
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers (default: CPU * 2)")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done without executing")
 	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, table)")
-	rootCmd.PersistentFlags().StringVar(&targetField, "target", "", "target field to scan (JSONL)")
+	rootCmd.PersistentFlags().StringVarP(&patternFlag, "pattern", "p", "", "pattern name to use")
+	rootCmd.PersistentFlags().StringVar(&targetField, "target", "", "target field in JSONL/CSV")
 	rootCmd.PersistentFlags().StringSliceVar(&targetFields, "targets", nil, "target fields to scan (JSONL)")
 	rootCmd.PersistentFlags().StringVar(&csvSeparator, "csv-sep", ",", "CSV separator")
 	rootCmd.PersistentFlags().BoolVar(&csvNoHeader, "csv-no-header", false, "CSV has no header")
