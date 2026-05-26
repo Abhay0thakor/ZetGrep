@@ -529,14 +529,14 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		reportFile.Close()
 	}
 
-	// Final Summary Footer
+	// Final Summary Footer - Sent to Stderr to keep Stdout clean for pipes (JSON, etc.)
 	duration := time.Since(start).Round(time.Millisecond)
-	fmt.Printf("\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
+	fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
 	summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
 	if outputFile != "" {
 		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(outputFile))
 	}
-	fmt.Printf("%s %s\n\n", au.Green("✔"), summary)
+	fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green("✔"), summary)
 }
 
 func formatResult(tmpl string, res *models.Result) string {
