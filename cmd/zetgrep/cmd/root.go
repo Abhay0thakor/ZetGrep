@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.5.0"
+	version = "v0.5.7"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -290,6 +290,7 @@ var rootCmd = &cobra.Command{
 		var resultChan <-chan *models.Result
 		var scanErr error
 
+		startTime := time.Now()
 		if processFile != "" {
 			resultChan, scanErr = svc.ProcessResults(ctx, processFile, activeToolIDs)
 		} else {
@@ -305,7 +306,7 @@ var rootCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		outputResults(resultChan)
+		outputResults(resultChan, startTime)
 	},
 }
 
@@ -403,7 +404,7 @@ func mergeInputConfigs(dest *models.InputConfig, src models.InputConfig) {
 	}
 }
 
-func outputResults(resultChan <-chan *models.Result) {
+func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	if jsonMode || format == "json" {
 		fmt.Print("[")
 	}
@@ -427,6 +428,8 @@ func outputResults(resultChan <-chan *models.Result) {
 			slog.Error("Error creating report file", "path", name, "error", err)
 		} else {
 			fmt.Fprintln(reportFile, "# ZetGrep Intelligence Report")
+			fmt.Fprintf(reportFile, "- **Generated at**: %s\n", time.Now().Format(time.RFC1123))
+			fmt.Fprintln(reportFile, "\n---\n")
 		}
 	}
 
@@ -437,7 +440,7 @@ func outputResults(resultChan <-chan *models.Result) {
 		if err != nil {
 			slog.Error("Error creating output file", "path", outputFile, "error", err)
 		} else {
-			if jsonMode {
+			if jsonMode || format == "json" {
 				fmt.Fprint(saveFile, "[")
 			}
 		}
@@ -447,7 +450,14 @@ func outputResults(resultChan <-chan *models.Result) {
 	for res := range resultChan {
 		hitCount++
 		if reportFile != nil {
-			fmt.Fprintf(reportFile, "### [%s] %s\n- Content: `%s`\n", res.Pattern, res.File, res.Content)
+			fmt.Fprintf(reportFile, "### [%s] %s\n- **Line**: %d\n- **Content**: `%s`\n", res.Pattern, res.File, res.Line, res.Content)
+			if len(res.ToolData) > 0 {
+				fmt.Fprintln(reportFile, "- **Tool Data**:")
+				for _, td := range res.ToolData {
+					fmt.Fprintf(reportFile, "  - *%s*: %s\n", td.Label, td.Value)
+				}
+			}
+			fmt.Fprintln(reportFile, "")
 		}
 
 		formatted := ""
@@ -477,10 +487,14 @@ func outputResults(resultChan <-chan *models.Result) {
 				fmt.Fprintln(saveFile, formatted)
 			}
 		} else if !silent {
-			fmt.Printf("[%s] %s:%d: %s\n", au.Yellow(res.Pattern), au.Cyan(res.File), res.Line, res.Content)
+			// Modern Two-Line Professional Text Output
+			matchPrefix := fmt.Sprintf("[%s] %s:%d", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line)
+			fmt.Printf("%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
+
 			for _, td := range res.ToolData {
-				fmt.Printf("   ↳ %s: %s\n", au.Magenta(td.Label), td.Value)
+				fmt.Printf("    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
 			}
+
 			if saveFile != nil {
 				fmt.Fprintf(saveFile, "[%s] %s:%d: %s\n", res.Pattern, res.File, res.Line, res.Content)
 				for _, td := range res.ToolData {
@@ -497,15 +511,15 @@ func outputResults(resultChan <-chan *models.Result) {
 		scanner.PutResult(res)
 	}
 
-	if format == "table" {
-		table.Render()
-	}
-
 	if jsonMode || format == "json" {
 		fmt.Println("]")
 		if saveFile != nil {
-			fmt.Fprintln(saveFile, "]")
+			fmt.Fprint(saveFile, "]")
 		}
+	}
+
+	if format == "table" {
+		table.Render()
 	}
 
 	if saveFile != nil {
@@ -514,9 +528,15 @@ func outputResults(resultChan <-chan *models.Result) {
 	if reportFile != nil {
 		reportFile.Close()
 	}
-	if !silent {
-		slog.Info("Finished", "total_hits", hitCount)
+
+	// Final Summary Footer
+	duration := time.Since(start).Round(time.Millisecond)
+	fmt.Printf("\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
+	summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
+	if outputFile != "" {
+		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(outputFile))
 	}
+	fmt.Printf("%s %s\n\n", au.Green("✔"), summary)
 }
 
 func formatResult(tmpl string, res *models.Result) string {
