@@ -29,6 +29,7 @@ This roadmap tracks the creation of extremely detailed, scenario-driven document
 
 ## 7. Ecosystem Integration
 - [x] **Blog 14: The Recon Pipeline** - Integrating ZetGrep with `subfinder`, `httpx`, `nuclei`, and `katana`.
+- [x] **Blog 15: Handling Compressed Data** - Zstd, Gzip, and beyond.
 
 ---
 All documentation is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.

@@ -63,6 +63,7 @@ var (
 	format         string
 	targetField    string
 	targetFields   []string
+	preProcess     string
 	csvSeparator   string
 	csvNoHeader    bool
 	csvIDIndex     int
@@ -116,6 +117,10 @@ var rootCmd = &cobra.Command{
 		}
 		if toolsDir != "" {
 			finalCfg.ToolsDir = utils.ExpandPath(toolsDir)
+		}
+
+		if preProcess != "" {
+			finalCfg.Input.PreProcess = preProcess
 		}
 
 		if targetField != "" {
@@ -293,6 +298,7 @@ func init() {
 
 	// Scan flags (now Persistent so they work on root and subcommands)
 	rootCmd.PersistentFlags().StringSliceVar(&inputConfigs, "input-config", nil, "path to input config file (YAML)")
+	rootCmd.PersistentFlags().StringVar(&preProcess, "pre-process", "", "command to run on every input file (e.g. 'zstd -dc')")
 	rootCmd.PersistentFlags().StringVarP(&listFile, "list-file", "l", "", "file containing list of targets")
 	rootCmd.PersistentFlags().BoolVar(&stdin, "stdin", false, "read targets from stdin")
 	rootCmd.PersistentFlags().StringVar(&inputMode, "im", "", "input mode (jsonl, csv, text)")

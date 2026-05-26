@@ -28,6 +28,7 @@ zetgrep scan [pattern] [targets...] [flags]
 - `-f, --format`: Output format (`text`, `json`, `table`).
 - `-w, --workflow`: Tool IDs to chain for each match (e.g., `--workflow ip_info,whois`).
 - `-c, --concurrency`: Number of concurrent workers (default: CPU * 2).
+- `--pre-process`: Command to run on every input file (e.g., `--pre-process "zstd -dc"`).
 - `--dry-run`: Show what patterns and targets would be processed without executing.
 - `--resume`: Path to a state file to resume a previous scan.
 
