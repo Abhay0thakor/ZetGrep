@@ -145,6 +145,35 @@ func unescapeContent(s string) string {
 	return s
 }
 
+func (s *ScannerService) resolveTargets(paths []string) []string {
+	var resolved []string
+	for _, path := range paths {
+		if path == "stdin" || path == "-" {
+			resolved = append(resolved, path)
+			continue
+		}
+		info, err := os.Stat(path)
+		if err != nil {
+			slog.Debug("Error stating path", "path", path, "error", err)
+			continue
+		}
+		if info.IsDir() {
+			filepath.Walk(path, func(p string, i os.FileInfo, e error) error {
+				if e != nil {
+					return nil
+				}
+				if !i.IsDir() {
+					resolved = append(resolved, p)
+				}
+				return nil
+			})
+		} else {
+			resolved = append(resolved, path)
+		}
+	}
+	return resolved
+}
+
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
 	resultChan := make(chan *models.Result, 1000)
@@ -272,7 +301,8 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			wg.Wait()
 		}()
 
-		for i, path := range opts.TargetPaths {
+		targets := s.resolveTargets(opts.TargetPaths)
+		for i, path := range targets {
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex {
 				continue
 			}
