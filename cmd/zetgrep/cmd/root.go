@@ -6,6 +6,7 @@ import (
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -22,7 +23,7 @@ import (
 )
 
 var (
-	version = "v0.6.0"
+	version = "v0.6.1"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -370,27 +371,31 @@ func mergeInputConfigs(dest *models.InputConfig, src models.InputConfig) {
 }
 
 func outputResults(resultChan <-chan *models.Result, start time.Time) {
-	// 1. Setup Structured Output Streams
-	var saveFile *os.File
-	var csvWriter *csv.Writer
-	var saveCsvWriter *csv.Writer
+	// 1. Setup Intelligent Routing
+	// uiOut: Where the Pro UI goes (Screen)
+	// dataOut: Where the structured data goes (File or Pipe)
+	var uiOut io.Writer = os.Stderr
+	var dataOut io.Writer = os.Stdout
 
+	var saveFile *os.File
 	if outputFile != "" && !reportMode {
 		var err error
 		saveFile, err = os.Create(outputFile)
 		if err != nil {
 			slog.Error("Error creating output file", "path", outputFile, "error", err)
 		} else {
-			if jsonMode || format == "json" { fmt.Fprint(saveFile, "[") }
-			if format == "csv" { saveCsvWriter = csv.NewWriter(saveFile) }
+			dataOut = saveFile
+			uiOut = os.Stdout // If we are saving to a file, terminal is free for beautiful UI
 		}
 	}
 
-	if format == "csv" { csvWriter = csv.NewWriter(os.Stdout) }
+	// Writers for specific formats
+	var csvWriter *csv.Writer
+	if format == "csv" { csvWriter = csv.NewWriter(dataOut) }
 
 	var table *tablewriter.Table
 	if format == "table" {
-		table = tablewriter.NewWriter(os.Stdout)
+		table = tablewriter.NewWriter(dataOut)
 		table.Header("Pattern", "File", "Line", "Content")
 	}
 
@@ -406,20 +411,25 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		}
 	}
 
+	// Start JSON array if needed
+	if (jsonMode || format == "json") && dataOut != nil {
+		fmt.Fprint(dataOut, "[")
+	}
+
 	// 2. Processing Loop
 	hitCount := 0
 	first := true
 	for res := range resultChan {
 		hitCount++
 
-		// Terminal UI (Stderr) - Always beautiful, never breaks stdout pipes
+		// Terminal UI (Professional Layout)
 		if !silent {
 			entropyStr := ""
 			if res.Entropy > 4.0 { entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String() }
 			matchPrefix := fmt.Sprintf("[%s] %s:%d%s", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line, entropyStr)
-			fmt.Fprintf(os.Stderr, "%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
+			fmt.Fprintf(uiOut, "%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
 			for _, td := range res.ToolData {
-				fmt.Fprintf(os.Stderr, "    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
+				fmt.Fprintf(uiOut, "    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
 			}
 		}
 
@@ -430,30 +440,21 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			fmt.Fprintln(reportFile, "")
 		}
 
-		// Structured Data Stream (Stdout & saveFile)
+		// Structured Data Stream
 		if jsonMode || format == "json" {
 			b, _ := json.Marshal(res)
-			if !first {
-				fmt.Print(",")
-				if saveFile != nil { fmt.Fprint(saveFile, ",") }
-			}
-			fmt.Print(string(b))
-			if saveFile != nil { fmt.Fprint(saveFile, string(b)) }
+			if !first { fmt.Fprint(dataOut, ",") }
+			fmt.Fprint(dataOut, string(b))
 		} else if format == "csv" {
-			row := []string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content}
-			csvWriter.Write(row)
-			if saveCsvWriter != nil { saveCsvWriter.Write(row) }
+			csvWriter.Write([]string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content})
 		} else if format == "table" {
 			table.Append(res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content)
 		} else if outputTemplate != "" {
-			out := formatResult(outputTemplate, res)
-			fmt.Println(out)
-			if saveFile != nil { fmt.Fprintln(saveFile, out) }
+			fmt.Fprintln(dataOut, formatResult(outputTemplate, res))
 		} else {
-			// Plain Text behavior (Grep-compatible)
+			// Plain Text behavior (Only if no specific data output is being forced elsewhere)
 			if format == "text" || format == "" {
-				fmt.Println(res.Content)
-				if saveFile != nil { fmt.Fprintln(saveFile, res.Content) }
+				fmt.Fprintln(dataOut, res.Content)
 			}
 		}
 		first = false
@@ -461,14 +462,10 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	}
 
 	// 3. Finalize Streams
-	if (jsonMode || format == "json") {
-		fmt.Println("]")
-		if saveFile != nil { fmt.Fprintln(saveFile, "]") }
+	if (jsonMode || format == "json") && dataOut != nil {
+		fmt.Fprintln(dataOut, "]")
 	}
-	if format == "csv" {
-		csvWriter.Flush()
-		if saveCsvWriter != nil { saveCsvWriter.Flush() }
-	}
+	if format == "csv" { csvWriter.Flush() }
 	if format == "table" { table.Render() }
 	if saveFile != nil { saveFile.Close() }
 	if reportFile != nil { reportFile.Close() }
