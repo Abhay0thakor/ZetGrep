@@ -7,82 +7,143 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
+	"github.com/klauspost/compress/zstd"
 	"github.com/olekukonko/tablewriter"
 )
 
-func outputResults(resultChan <-chan *models.Result, start time.Time) {
-	// 1. Setup Intelligent Routing
-	// uiOut: Where the Pro UI goes (Screen/Human) -> Always Stderr
-	// dataOut: Where the structured data goes (Machine) -> Stdout or File
-	var uiOut io.Writer = os.Stderr
-	var dataOut io.Writer = os.Stdout
+// SmartWriter handles optional zstd compression
+type SmartWriter struct {
+	file   *os.File
+	zstd   *zstd.Encoder
+	writer io.Writer
+}
 
-	var saveFile *os.File
-	if outputFile != "" && !reportMode {
-		var err error
-		saveFile, err = os.Create(outputFile)
+func newSmartWriter(path string) (*SmartWriter, error) {
+	if path == "" {
+		return nil, nil
+	}
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+
+	sw := &SmartWriter{file: f, writer: f}
+	if strings.HasSuffix(strings.ToLower(path), ".zst") {
+		enc, err := zstd.NewWriter(f)
 		if err != nil {
-			slog.Error("Error creating output file", "path", outputFile, "error", err)
-		} else {
-			dataOut = saveFile
+			f.Close()
+			return nil, err
 		}
+		sw.zstd = enc
+		sw.writer = enc
+	}
+	return sw, nil
+}
+
+func (sw *SmartWriter) Write(p []byte) (n int, err error) {
+	return sw.writer.Write(p)
+}
+
+func (sw *SmartWriter) Close() error {
+	if sw.zstd != nil {
+		sw.zstd.Close()
+	}
+	return sw.file.Close()
+}
+
+func outputResults(resultChan <-chan *models.Result, start time.Time) {
+	// 1. Setup Stream Routing
+	uiOut := os.Stderr
+	dataOut := os.Stdout
+
+	// New Dedicated Multi-Output Streams
+	jsonSW, err := newSmartWriter(outputJSON)
+	if err != nil {
+		slog.Error("Error creating JSON output file", "path", outputJSON, "error", err)
+	}
+	textSW, err := newSmartWriter(outputText)
+	if err != nil {
+		slog.Error("Error creating Text output file", "path", outputText, "error", err)
+	}
+
+	// Legacy -o support
+	legacySW, err := newSmartWriter(outputFile)
+	var legacyDataOut io.Writer = dataOut
+	if legacySW != nil && !reportMode {
+		legacyDataOut = legacySW
 	}
 
 	var csvWriter *csv.Writer
 	if format == "csv" {
-		csvWriter = csv.NewWriter(dataOut)
+		csvWriter = csv.NewWriter(legacyDataOut)
 	}
 
 	var table *tablewriter.Table
 	if format == "table" {
-		table = tablewriter.NewWriter(dataOut)
+		table = tablewriter.NewWriter(legacyDataOut)
 		table.Header("Pattern", "File", "Line", "Content")
 	}
 
 	var reportFile *os.File
-	if reportMode {
-		name := outputFile
-		if name == "" {
-			name = fmt.Sprintf("zetgrep_report_%d.md", time.Now().Unix())
-		}
-		var err error
-		reportFile, err = os.Create(name)
-		if err == nil {
+	if reportMode && outputFile != "" {
+		reportFile, _ = os.Create(outputFile)
+		if reportFile != nil {
 			fmt.Fprintln(reportFile, "# ZetGrep Intelligence Report")
 			fmt.Fprintf(reportFile, "- **Generated at**: %s\n\n---\n\n", time.Now().Format(time.RFC1123))
 		}
 	}
 
-	// Start JSON array if needed
-	if (jsonMode || format == "json") && dataOut != nil {
-		fmt.Fprintf(dataOut, "[\n")
+	// 2. Initial Headers
+	if (jsonMode || format == "json") && legacyDataOut != nil {
+		fmt.Fprintf(legacyDataOut, "[\n")
+	}
+	if jsonSW != nil {
+		fmt.Fprintf(jsonSW, "[\n")
 	}
 
-	// 2. Processing Loop
+	// 3. Processing Loop
 	hitCount := 0
 	first := true
 	for res := range resultChan {
 		hitCount++
 
-		// Terminal UI (Professional Layout)
-		if !silent {
-			entropyStr := ""
-			if res.Entropy > 4.0 {
-				entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String()
-			}
-			matchPrefix := fmt.Sprintf("[%s] %s:%d%s", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line, entropyStr)
-			fmt.Fprintf(uiOut, "%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
-			for _, td := range res.ToolData {
-				fmt.Fprintf(uiOut, "    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
-			}
+		// Generate the Professional UI string
+		entropyStr := ""
+		if res.Entropy > 4.0 {
+			entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String()
+		}
+		matchPrefix := fmt.Sprintf("[%s] %s:%d%s", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line, entropyStr)
+		proUI := fmt.Sprintf("%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
+		for _, td := range res.ToolData {
+			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
 		}
 
-		// Persistent Reporting
+		// A. Always show Pro UI on terminal (unless silent)
+		if !silent {
+			fmt.Fprint(uiOut, proUI)
+		}
+
+		// B. Save Pro UI to dedicated text file (oT)
+		if textSW != nil {
+			fmt.Fprint(textSW, stripANSI(proUI))
+		}
+
+		// C. Save JSON to dedicated file (oJ)
+		if jsonSW != nil {
+			b, _ := json.Marshal(res)
+			if !first {
+				fmt.Fprint(jsonSW, ",\n")
+			}
+			jsonSW.Write(b)
+		}
+
+		// D. Persistent Reporting (Legacy)
 		if reportFile != nil {
 			fmt.Fprintf(reportFile, "### [%s] %s\n- Line: %d\n- Content: `%s`\n", res.Pattern, res.File, res.Line, res.Content)
 			for _, td := range res.ToolData {
@@ -91,31 +152,39 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			fmt.Fprintln(reportFile, "")
 		}
 
-		// Structured Data Stream
+		// E. Legacy Data Stream (Stdout or -o)
 		if jsonMode || format == "json" {
 			b, _ := json.Marshal(res)
 			if !first {
-				fmt.Fprintf(dataOut, ",\n")
+				fmt.Fprintf(legacyDataOut, ",\n")
 			}
-			fmt.Fprint(dataOut, string(b))
+			fmt.Fprint(legacyDataOut, string(b))
 		} else if format == "csv" {
 			csvWriter.Write([]string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content})
 		} else if format == "table" {
 			table.Append(res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content)
 		} else if outputTemplate != "" {
-			fmt.Fprintln(dataOut, formatResult(outputTemplate, res))
+			fmt.Fprintln(legacyDataOut, formatResult(outputTemplate, res))
 		} else {
 			if format == "text" || format == "" {
-				fmt.Fprintln(dataOut, res.Content)
+				fmt.Fprintln(legacyDataOut, res.Content)
 			}
 		}
+
 		first = false
 		scanner.PutResult(res)
 	}
 
-	// 3. Finalize Streams
-	if (jsonMode || format == "json") && dataOut != nil {
-		fmt.Fprintf(dataOut, "\n]\n")
+	// 4. Finalize Streams
+	if (jsonMode || format == "json") && legacyDataOut != nil {
+		fmt.Fprintf(legacyDataOut, "\n]\n")
+	}
+	if jsonSW != nil {
+		fmt.Fprintf(jsonSW, "\n]\n")
+		jsonSW.Close()
+	}
+	if textSW != nil {
+		textSW.Close()
 	}
 	if format == "csv" {
 		csvWriter.Flush()
@@ -123,8 +192,8 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	if format == "table" {
 		table.Render()
 	}
-	if saveFile != nil {
-		saveFile.Close()
+	if legacySW != nil {
+		legacySW.Close()
 	}
 	if reportFile != nil {
 		reportFile.Close()
@@ -134,8 +203,14 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	duration := time.Since(start).Round(time.Millisecond)
 	fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
 	summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
-	if outputFile != "" {
-		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(outputFile))
+	
+	var saved []string
+	if outputJSON != "" { saved = append(saved, outputJSON) }
+	if outputText != "" { saved = append(saved, outputText) }
+	if outputFile != "" { saved = append(saved, outputFile) }
+	
+	if len(saved) > 0 {
+		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(strings.Join(saved, ", ")))
 	}
 	fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green("✔"), summary)
 }
@@ -152,4 +227,10 @@ func formatResult(tmpl string, res *models.Result) string {
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.Label), td.Value)
 	}
 	return out
+}
+
+func stripANSI(str string) string {
+	const ansi = "[\u001B\u009B][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]"
+	var re = regexp.MustCompile(ansi)
+	return re.ReplaceAllString(str, "")
 }

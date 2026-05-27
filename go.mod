@@ -4,6 +4,7 @@ go 1.25.5
 
 require (
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
+	github.com/klauspost/compress v1.18.6
 	github.com/logrusorgru/aurora v2.0.3+incompatible
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/projectdiscovery/utils v0.9.0

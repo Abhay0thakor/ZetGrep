@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	version = "v0.6.2"
+	version = "v0.6.3"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -52,6 +52,8 @@ var (
 	jsonMode       bool
 	reportMode     bool
 	outputFile     string
+	outputJSON     string
+	outputText     string
 	outputTemplate string
 	toolIDs        string
 	resumeFile     string
@@ -327,6 +329,8 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonMode, "json", false, "output in JSON")
 	rootCmd.PersistentFlags().BoolVar(&reportMode, "report", false, "generate markdown report")
 	rootCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "output file path")
+	rootCmd.PersistentFlags().StringVar(&outputJSON, "oJ", "", "save results to JSON file (supports .zst)")
+	rootCmd.PersistentFlags().StringVar(&outputText, "oT", "", "save results to Text file (supports .zst)")
 	rootCmd.PersistentFlags().StringVarP(&outputTemplate, "template", "t", "", "output template")
 	rootCmd.PersistentFlags().StringVarP(&toolIDs, "workflow", "w", "", "workflow tool IDs")
 	rootCmd.PersistentFlags().StringVar(&resumeFile, "resume", "", "resume scan state")
