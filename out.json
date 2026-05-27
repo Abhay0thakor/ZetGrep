@@ -1,1 +1,0 @@
-[{"id":0,"pattern":"ip","file":"test_env/data/sample.txt","line":1,"content":"1.1.1.1","matches":["1.1.1.1","1.","1","1"],"entropy":0.9852281360342515},{"id":0,"pattern":"ip","file":"test_env/data/sample.txt","line":2,"content":"1.1.1.1","matches":["1.1.1.1","1.","1","1"],"entropy":0.9852281360342515}]
