@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -21,7 +22,7 @@ import (
 )
 
 var (
-	version = "v0.5.7"
+	version = "v0.6.0"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -94,7 +95,6 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		// If no pattern provided and not in special modes, show help
 		if len(args) == 0 && !allMode && processFile == "" {
 			cmd.Help()
 			return
@@ -204,10 +204,7 @@ var rootCmd = &cobra.Command{
 			}
 			f.Close()
 		} else {
-			// Determine which arguments are targets
 			targetArgs := args
-			
-			// Smart Swap Logic: If user provides <target> <pattern> instead of <pattern> <target>
 			if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" && len(args) >= 2 {
 				firstExists := false
 				if _, err := os.Stat(utils.ExpandPath(args[0])); err == nil {
@@ -218,12 +215,10 @@ var rootCmd = &cobra.Command{
 					lastExists = true
 				}
 
-				// If first is a file and last isn't, assume last is the pattern
 				if firstExists && !lastExists {
 					patternFlag = args[len(args)-1]
 					targetArgs = args[:len(args)-1]
 				} else {
-					// Default: First arg is pattern
 					if len(args) > 1 {
 						targetArgs = args[1:]
 					} else {
@@ -231,7 +226,6 @@ var rootCmd = &cobra.Command{
 					}
 				}
 			} else if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" {
-				// Single arg or other cases
 				if len(args) > 1 {
 					targetArgs = args[1:]
 				} else {
@@ -279,10 +273,7 @@ var rootCmd = &cobra.Command{
 
 		if dryRun {
 			slog.Info("Dry-run mode enabled. Scanning would proceed with:",
-				"targets", targets,
-				"patterns", runPats,
-				"tools", activeToolIDs,
-				"concurrency", concurrency)
+				"targets", targets, "patterns", runPats, "tools", activeToolIDs, "concurrency", concurrency)
 			return
 		}
 
@@ -319,17 +310,14 @@ func Execute() {
 
 func init() {
 	rootCmd.AddCommand(versionCmd)
-	// Global flags
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose mode")
 	rootCmd.PersistentFlags().BoolVar(&silent, "silent", false, "silent mode")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color")
 	rootCmd.PersistentFlags().StringSliceVar(&configFiles, "config-file", nil, "path to global config")
 	rootCmd.PersistentFlags().StringVar(&patternsDir, "pd", "", "patterns directory")
 	rootCmd.PersistentFlags().StringVar(&toolsDir, "td", "", "tools directory")
-
-	// Scan flags (now Persistent so they work on root and subcommands)
 	rootCmd.PersistentFlags().StringSliceVar(&inputConfigs, "input-config", nil, "path to input config file (YAML)")
-	rootCmd.PersistentFlags().StringVar(&preProcess, "pre-process", "", "command to run on every input file (e.g. 'zstd -dc')")
+	rootCmd.PersistentFlags().StringVar(&preProcess, "pre-process", "", "command to run on every input file")
 	rootCmd.PersistentFlags().StringVarP(&listFile, "list-file", "l", "", "file containing list of targets")
 	rootCmd.PersistentFlags().BoolVar(&stdin, "stdin", false, "read targets from stdin")
 	rootCmd.PersistentFlags().StringVar(&inputMode, "im", "", "input mode (jsonl, csv, text)")
@@ -346,12 +334,12 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&toolIDs, "workflow", "w", "", "workflow tool IDs")
 	rootCmd.PersistentFlags().StringVar(&resumeFile, "resume", "", "resume scan state")
 	rootCmd.PersistentFlags().StringVar(&processFile, "process", "", "process a previously saved JSON results file")
-	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers (default: CPU * 2)")
-	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done without executing")
-	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, table)")
+	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
+	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
+	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, csv, table)")
 	rootCmd.PersistentFlags().StringVarP(&patternFlag, "pattern", "p", "", "pattern name to use")
 	rootCmd.PersistentFlags().StringVar(&targetField, "target", "", "target field in JSONL/CSV")
-	rootCmd.PersistentFlags().StringSliceVar(&targetFields, "targets", nil, "target fields to scan (JSONL)")
+	rootCmd.PersistentFlags().StringSliceVar(&targetFields, "targets", nil, "target fields to scan")
 	rootCmd.PersistentFlags().StringVar(&csvSeparator, "csv-sep", ",", "CSV separator")
 	rootCmd.PersistentFlags().BoolVar(&csvNoHeader, "csv-no-header", false, "CSV has no header")
 	rootCmd.PersistentFlags().IntVar(&csvIDIndex, "csv-id", 0, "CSV ID column index")
@@ -363,51 +351,42 @@ func showBanner() {
 	fmt.Fprintf(os.Stderr, "\t\t%s\n\n", au.Faint(version))
 }
 
-// Helpers
 func mergeInputConfigs(dest *models.InputConfig, src models.InputConfig) {
-	if src.Format != "" {
-		dest.Format = src.Format
-	}
-	if src.PreProcess != "" {
-		dest.PreProcess = src.PreProcess
-	}
-	if src.Target != "" {
-		dest.Target = src.Target
-	}
-	if len(src.Targets) > 0 {
-		dest.Targets = src.Targets
-	}
-	if src.ID != "" {
-		dest.ID = src.ID
-	}
-	if src.Decode {
-		dest.Decode = true
-	}
+	if src.Format != "" { dest.Format = src.Format }
+	if src.PreProcess != "" { dest.PreProcess = src.PreProcess }
+	if src.Target != "" { dest.Target = src.Target }
+	if len(src.Targets) > 0 { dest.Targets = src.Targets }
+	if src.ID != "" { dest.ID = src.ID }
+	if src.Decode { dest.Decode = true }
 	if len(src.Filters) > 0 {
-		if dest.Filters == nil {
-			dest.Filters = make(map[string]string)
-		}
-		for k, v := range src.Filters {
-			dest.Filters[k] = v
-		}
+		if dest.Filters == nil { dest.Filters = make(map[string]string) }
+		for k, v := range src.Filters { dest.Filters[k] = v }
 	}
-	if src.CSVConfig.Separator != "" {
-		dest.CSVConfig = src.CSVConfig
-	}
+	if src.CSVConfig.Separator != "" { dest.CSVConfig = src.CSVConfig }
 	if len(src.PostProcess) > 0 {
-		if dest.PostProcess == nil {
-			dest.PostProcess = make(map[string]string)
-		}
-		for k, v := range src.PostProcess {
-			dest.PostProcess[k] = v
-		}
+		if dest.PostProcess == nil { dest.PostProcess = make(map[string]string) }
+		for k, v := range src.PostProcess { dest.PostProcess[k] = v }
 	}
 }
 
 func outputResults(resultChan <-chan *models.Result, start time.Time) {
-	if jsonMode || format == "json" {
-		fmt.Print("[")
+	// 1. Setup Structured Output Streams
+	var saveFile *os.File
+	var csvWriter *csv.Writer
+	var saveCsvWriter *csv.Writer
+
+	if outputFile != "" && !reportMode {
+		var err error
+		saveFile, err = os.Create(outputFile)
+		if err != nil {
+			slog.Error("Error creating output file", "path", outputFile, "error", err)
+		} else {
+			if jsonMode || format == "json" { fmt.Fprint(saveFile, "[") }
+			if format == "csv" { saveCsvWriter = csv.NewWriter(saveFile) }
+		}
 	}
+
+	if format == "csv" { csvWriter = csv.NewWriter(os.Stdout) }
 
 	var table *tablewriter.Table
 	if format == "table" {
@@ -415,127 +394,90 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		table.Header("Pattern", "File", "Line", "Content")
 	}
 
-	first := true
 	var reportFile *os.File
 	if reportMode {
-		name := fmt.Sprintf("zetgrep_report_%d.md", time.Now().Unix())
-		if outputFile != "" && strings.HasSuffix(outputFile, ".md") {
-			name = outputFile
-		}
+		name := outputFile
+		if name == "" { name = fmt.Sprintf("zetgrep_report_%d.md", time.Now().Unix()) }
 		var err error
 		reportFile, err = os.Create(name)
-		if err != nil {
-			slog.Error("Error creating report file", "path", name, "error", err)
-		} else {
+		if err == nil {
 			fmt.Fprintln(reportFile, "# ZetGrep Intelligence Report")
-			fmt.Fprintf(reportFile, "- **Generated at**: %s\n", time.Now().Format(time.RFC1123))
-			fmt.Fprintln(reportFile, "\n---\n")
+			fmt.Fprintf(reportFile, "- **Generated at**: %s\n\n---\n\n", time.Now().Format(time.RFC1123))
 		}
 	}
 
-	var saveFile *os.File
-	if outputFile != "" && !reportMode {
-		var err error
-		saveFile, err = os.Create(outputFile)
-		if err != nil {
-			slog.Error("Error creating output file", "path", outputFile, "error", err)
-		} else {
-			if jsonMode || format == "json" {
-				fmt.Fprint(saveFile, "[")
-			}
-		}
-	}
-
+	// 2. Processing Loop
 	hitCount := 0
+	first := true
 	for res := range resultChan {
 		hitCount++
-		if reportFile != nil {
-			fmt.Fprintf(reportFile, "### [%s] %s\n- **Line**: %d\n- **Content**: `%s`\n", res.Pattern, res.File, res.Line, res.Content)
-			if len(res.ToolData) > 0 {
-				fmt.Fprintln(reportFile, "- **Tool Data**:")
-				for _, td := range res.ToolData {
-					fmt.Fprintf(reportFile, "  - *%s*: %s\n", td.Label, td.Value)
-				}
+
+		// Terminal UI (Stderr) - Always beautiful, never breaks stdout pipes
+		if !silent {
+			entropyStr := ""
+			if res.Entropy > 4.0 { entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String() }
+			matchPrefix := fmt.Sprintf("[%s] %s:%d%s", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line, entropyStr)
+			fmt.Fprintf(os.Stderr, "%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
+			for _, td := range res.ToolData {
+				fmt.Fprintf(os.Stderr, "    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
 			}
+		}
+
+		// Persistent Reporting
+		if reportFile != nil {
+			fmt.Fprintf(reportFile, "### [%s] %s\n- Line: %d\n- Content: `%s`\n", res.Pattern, res.File, res.Line, res.Content)
+			for _, td := range res.ToolData { fmt.Fprintf(reportFile, "  - **%s**: %s\n", td.Label, td.Value) }
 			fmt.Fprintln(reportFile, "")
 		}
 
-		formatted := ""
+		// Structured Data Stream (Stdout & saveFile)
 		if jsonMode || format == "json" {
-			b, err := json.Marshal(res)
-			if err != nil {
-				slog.Error("Error marshaling result", "error", err)
-				continue
-			}
-			formatted = string(b)
+			b, _ := json.Marshal(res)
 			if !first {
 				fmt.Print(",")
-				if saveFile != nil {
-					fmt.Fprint(saveFile, ",")
-				}
+				if saveFile != nil { fmt.Fprint(saveFile, ",") }
 			}
-			fmt.Print(formatted)
-			if saveFile != nil {
-				fmt.Fprint(saveFile, formatted)
-			}
+			fmt.Print(string(b))
+			if saveFile != nil { fmt.Fprint(saveFile, string(b)) }
+		} else if format == "csv" {
+			row := []string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content}
+			csvWriter.Write(row)
+			if saveCsvWriter != nil { saveCsvWriter.Write(row) }
 		} else if format == "table" {
 			table.Append(res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content)
 		} else if outputTemplate != "" {
-			formatted = formatResult(outputTemplate, res)
-			fmt.Println(formatted)
-			if saveFile != nil {
-				fmt.Fprintln(saveFile, formatted)
-			}
-		} else if !silent {
-			// Modern Two-Line Professional Text Output
-			matchPrefix := fmt.Sprintf("[%s] %s:%d", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line)
-			fmt.Printf("%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
-
-			for _, td := range res.ToolData {
-				fmt.Printf("    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
-			}
-
-			if saveFile != nil {
-				fmt.Fprintf(saveFile, "[%s] %s:%d: %s\n", res.Pattern, res.File, res.Line, res.Content)
-				for _, td := range res.ToolData {
-					fmt.Fprintf(saveFile, "   ↳ %s: %s\n", td.Label, td.Value)
-				}
-			}
+			out := formatResult(outputTemplate, res)
+			fmt.Println(out)
+			if saveFile != nil { fmt.Fprintln(saveFile, out) }
 		} else {
-			fmt.Println(res.Content)
-			if saveFile != nil {
-				fmt.Fprintln(saveFile, res.Content)
+			// Plain Text behavior (Grep-compatible)
+			if format == "text" || format == "" {
+				fmt.Println(res.Content)
+				if saveFile != nil { fmt.Fprintln(saveFile, res.Content) }
 			}
 		}
 		first = false
 		scanner.PutResult(res)
 	}
 
-	if jsonMode || format == "json" {
+	// 3. Finalize Streams
+	if (jsonMode || format == "json") {
 		fmt.Println("]")
-		if saveFile != nil {
-			fmt.Fprint(saveFile, "]")
-		}
+		if saveFile != nil { fmt.Fprintln(saveFile, "]") }
 	}
+	if format == "csv" {
+		csvWriter.Flush()
+		if saveCsvWriter != nil { saveCsvWriter.Flush() }
+	}
+	if format == "table" { table.Render() }
+	if saveFile != nil { saveFile.Close() }
+	if reportFile != nil { reportFile.Close() }
 
-	if format == "table" {
-		table.Render()
-	}
-
-	if saveFile != nil {
-		saveFile.Close()
-	}
-	if reportFile != nil {
-		reportFile.Close()
-	}
-
-	// Final Summary Footer - Sent to Stderr to keep Stdout clean for pipes (JSON, etc.)
+	// Summary (Stderr)
 	duration := time.Since(start).Round(time.Millisecond)
 	fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
 	summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
-	if outputFile != "" {
-		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(outputFile))
-	}
+	if outputFile != "" { summary += fmt.Sprintf(" | Saved to: %s", au.Underline(outputFile)) }
 	fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green("✔"), summary)
 }
 
@@ -545,16 +487,7 @@ func formatResult(tmpl string, res *models.Result) string {
 	out = strings.ReplaceAll(out, "{{file}}", res.File)
 	out = strings.ReplaceAll(out, "{{line}}", fmt.Sprintf("%d", res.Line))
 	out = strings.ReplaceAll(out, "{{content}}", res.Content)
-	out = strings.ReplaceAll(out, "{{ext}}", res.Ext)
-	out = strings.ReplaceAll(out, "{{entropy}}", fmt.Sprintf("%.3f", res.Entropy))
-	mainMatch := res.Content
-	if len(res.Matches) > 0 {
-		mainMatch = res.Matches[0]
-	}
-	out = strings.ReplaceAll(out, "{{match}}", mainMatch)
-	for i, m := range res.Matches {
-		out = strings.ReplaceAll(out, fmt.Sprintf("{{match[%d]}}", i), m)
-	}
+	out = strings.ReplaceAll(out, "{{entropy}}", fmt.Sprintf("%.2f", res.Entropy))
 	for _, td := range res.ToolData {
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.ToolID), td.Value)
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.Label), td.Value)
