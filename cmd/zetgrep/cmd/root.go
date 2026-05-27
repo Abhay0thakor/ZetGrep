@@ -60,6 +60,8 @@ var (
 	processFile    string
 	notify         bool
 	notifyInterval int
+	cooldownEvery  int
+	cooldownTime   string
 	concurrency    int
 	dryRun         bool
 	format         string
@@ -290,6 +292,7 @@ var rootCmd = &cobra.Command{
 				TargetPaths: targets, Patterns: runPats, Tags: tags, ToolIDs: activeToolIDs,
 				SmartMode: smartMode, EntropyMode: entropyMode, Unique: uniqueMode, ResumeFile: resumeFile, Silent: silent,
 				Notify: notify, NotifyInterval: notifyInterval,
+				CooldownEvery: cooldownEvery, CooldownTime: cooldownTime,
 				Concurrency: concurrency,
 			})
 		}
@@ -340,6 +343,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVar(&processFile, "process", "", "process a previously saved JSON results file")
 	rootCmd.PersistentFlags().BoolVar(&notify, "notify", false, "enable progress notifications via 'notify'")
 	rootCmd.PersistentFlags().IntVar(&notifyInterval, "notify-interval", 10, "interval percentage for notifications")
+	rootCmd.PersistentFlags().IntVar(&cooldownEvery, "cooldown-every", 0, "pause scan every X percentage (e.g. 25)")
+	rootCmd.PersistentFlags().StringVar(&cooldownTime, "cooldown-duration", "45m", "duration to pause for cooldown (e.g. 45m, 1h)")
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
 	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, csv, table)")

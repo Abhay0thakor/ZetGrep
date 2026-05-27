@@ -36,6 +36,8 @@ type ScannerOptions struct {
 	Concurrency    int
 	Notify         bool
 	NotifyInterval int
+	CooldownEvery  int
+	CooldownTime   string
 }
 
 type ScannerService struct {
@@ -340,6 +342,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 		var globalBytesRead int64
 		var lastNotifiedPct int = -1
+		var lastCooldownPct int = 0
 		var progressMu sync.Mutex
 
 		for i, path := range targets {
@@ -369,12 +372,14 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				r: sourceReader,
 				onRead: func(n int) {
 					progressMu.Lock()
+					defer progressMu.Unlock()
 					globalBytesRead += int64(n)
 					
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
 
+						// 1. Notification Logic
 						if opts.Notify && pct > lastNotifiedPct {
 							shouldNotify := false
 							if pct < 95 {
@@ -390,8 +395,26 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 								lastNotifiedPct = pct
 							}
 						}
+
+						// 2. Cooldown Logic
+						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
+							lastCooldownPct = pct
+							duration, err := time.ParseDuration(opts.CooldownTime)
+							if err == nil {
+								msg := fmt.Sprintf("❄️ Cooldown Cycle: Progress reached %d%%. Pausing for %s to cool down hardware...", pct, opts.CooldownTime)
+								slog.Info(msg)
+								if opts.Notify {
+									s.sendNotification(msg)
+								}
+								time.Sleep(duration)
+								resumeMsg := fmt.Sprintf("🚀 Cooldown finished. Resuming scan from %d%%.", pct)
+								slog.Info(resumeMsg)
+								if opts.Notify {
+									s.sendNotification(resumeMsg)
+								}
+							}
+						}
 					}
-					progressMu.Unlock()
 				},
 			}
 
