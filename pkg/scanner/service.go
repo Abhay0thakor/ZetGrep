@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
@@ -23,16 +24,18 @@ import (
 )
 
 type ScannerOptions struct {
-	TargetPaths []string
-	Patterns    []string
-	Tags        []string
-	ToolIDs     []string
-	SmartMode   bool
-	EntropyMode bool
-	Unique      bool
-	ResumeFile  string
-	Silent      bool
-	Concurrency int
+	TargetPaths    []string
+	Patterns       []string
+	Tags           []string
+	ToolIDs        []string
+	SmartMode      bool
+	EntropyMode    bool
+	Unique         bool
+	ResumeFile     string
+	Silent         bool
+	Concurrency    int
+	Notify         bool
+	NotifyInterval int
 }
 
 type ScannerService struct {
@@ -63,7 +66,6 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 	if cfg.PatternsDir == "" {
 		cfg.PatternsDir, err = GetPatternDir()
 		if err != nil {
-			// fallback to current directory patterns if any
 			if _, err := os.Stat("patterns"); err == nil {
 				cfg.PatternsDir = "patterns"
 			}
@@ -129,13 +131,10 @@ func unescapeContent(s string) string {
 	if !strings.Contains(s, "\\") {
 		return s
 	}
-	// 1. Handle JSON Escaped Newlines
 	s = strings.ReplaceAll(s, "\\n", "\n")
 	s = strings.ReplaceAll(s, "\\r", "\r")
 	s = strings.ReplaceAll(s, "\\t", "\t")
 	s = strings.ReplaceAll(s, "\\\"", "\"")
-
-	// 2. Handle Unicode escapes if any
 	if strings.Contains(s, "\\u") {
 		var decoded string
 		if err := json.Unmarshal([]byte("\""+s+"\""), &decoded); err == nil {
@@ -172,6 +171,14 @@ func (s *ScannerService) resolveTargets(paths []string) []string {
 		}
 	}
 	return resolved
+}
+
+func (s *ScannerService) sendNotification(msg string) {
+	cmd := exec.Command("notify")
+	cmd.Stdin = strings.NewReader(msg)
+	if err := cmd.Run(); err != nil {
+		slog.Debug("Failed to send notification", "error", err)
+	}
 }
 
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
@@ -214,6 +221,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		numWorkers = runtime.NumCPU() * 2
 	}
 
+	hitCounter := struct {
+		sync.Mutex
+		count int
+	}{}
+
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
 		go func() {
@@ -224,8 +236,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					content = unescapeContent(content)
 				}
 
-				// Post-process usually applies to the whole content if not specified
-				// For unified, we check if there's a post-process for the specific field or "$"
 				postCmd := ""
 				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok {
 					postCmd = cmd
@@ -267,7 +277,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 							}
 						}
 
-						// ONLY filter if explicitly requested
 						if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
 							PutResult(res)
 							continue
@@ -281,6 +290,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 								res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
 							}
 						}
+						
+						hitCounter.Lock()
+						hitCounter.count++
+						hitCounter.Unlock()
+
 						select {
 						case <-ctx.Done():
 							return
@@ -294,6 +308,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 	go func() {
 		defer close(resultChan)
+		startTime := time.Now()
 		var innerWg sync.WaitGroup
 		innerWg.Add(1)
 		go func() {
@@ -302,17 +317,27 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		}()
 
 		targets := s.resolveTargets(opts.TargetPaths)
+		var globalTotalSize int64
+		for _, path := range targets {
+			if info, err := os.Stat(path); err == nil {
+				globalTotalSize += info.Size()
+			}
+		}
+
+		var globalBytesRead int64
+		var lastNotifiedPct int = -1
+
 		for i, path := range targets {
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex {
+				if info, err := os.Stat(path); err == nil {
+					globalBytesRead += info.Size()
+				}
 				continue
 			}
 
 			var fileReader io.ReadCloser
-			var totalSize int64
 			if path != "stdin" && path != "-" {
-				if info, err := os.Stat(path); err == nil {
-					totalSize = info.Size()
-				}
+				// totalSize check removed here because we use globalTotalSize
 			}
 
 			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
@@ -352,20 +377,41 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				select {
 				case <-ctx.Done():
 					fileReader.Close()
-					close(recordChan) // Close recordChan to unblock workers
+					close(recordChan)
 					return
 				case recordChan <- rec:
 				}
 
-				if lineCount%100 == 0 {
-					if totalSize > 0 && !opts.Silent {
-						bytesRead += int64(len(rec.Content))
-						pct := (float64(bytesRead) / float64(totalSize)) * 100
-						if pct > 100 {
-							pct = 100
+				if lineCount%500 == 0 {
+					bytesInChunk := int64(len(rec.Content))
+					bytesRead += bytesInChunk
+					globalBytesRead += bytesInChunk
+
+					if globalTotalSize > 0 {
+						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
+						if pct > 100 { pct = 100 }
+
+						if opts.Notify && pct > lastNotifiedPct {
+							shouldNotify := false
+							if pct < 95 {
+								if pct%opts.NotifyInterval == 0 {
+									shouldNotify = true
+								}
+							} else {
+								shouldNotify = true
+							}
+
+							if shouldNotify && pct != lastNotifiedPct {
+								s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
+								lastNotifiedPct = pct
+							}
 						}
-						fmt.Fprintf(os.Stderr, "\r%s Scanning %s: %.1f%% (%d records)", au.Cyan("[*]"), filepath.Base(path), pct, lineCount)
+
+						if !opts.Silent {
+							fmt.Fprintf(os.Stderr, "\r%s Total Progress: %d%% | Scanning %s: %d records", au.Cyan("[*]"), pct, filepath.Base(path), lineCount)
+						}
 					}
+
 					if opts.ResumeFile != "" {
 						s.Resume.FileIndex = i
 						s.Resume.LineIndex = lineCount
@@ -375,7 +421,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 			}
 			fileReader.Close()
-			if !opts.Silent && totalSize > 0 {
+			if !opts.Silent && globalTotalSize > 0 {
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
 			}
 			if opts.ResumeFile != "" {
@@ -385,8 +431,16 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				s.SaveResumeState(opts.ResumeFile)
 			}
 		}
-		close(recordChan) // All records sent, close channel to unblock workers
-		innerWg.Wait()    // Wait for all workers to finish
+		close(recordChan)
+		innerWg.Wait()
+		
+		if opts.Notify {
+			duration := time.Since(startTime).Round(time.Second)
+			hitCounter.Lock()
+			finalHits := hitCounter.count
+			hitCounter.Unlock()
+			s.sendNotification(fmt.Sprintf("ZetGrep Completed! ✅\nTotal Duration: %s\nTotal Hits: %d\nTargets Processed: %d", duration, finalHits, len(targets)))
+		}
 	}()
 
 	return resultChan, nil
@@ -521,7 +575,6 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 		}
 		targets = append(targets, s.Config.Input.Targets...)
 
-		// If no targets defined or format is text, default to raw line ($)
 		if len(targets) == 0 || s.Config.Input.Format == "text" {
 			targets = append(targets, "$")
 		}

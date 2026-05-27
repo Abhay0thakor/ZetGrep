@@ -19,7 +19,7 @@ import (
 )
 
 var (
-	version = "v0.6.3"
+	version = "v0.6.4"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -58,6 +58,8 @@ var (
 	toolIDs        string
 	resumeFile     string
 	processFile    string
+	notify         bool
+	notifyInterval int
 	concurrency    int
 	dryRun         bool
 	format         string
@@ -287,6 +289,7 @@ var rootCmd = &cobra.Command{
 			resultChan, scanErr = svc.RunScan(ctx, scanner.ScannerOptions{
 				TargetPaths: targets, Patterns: runPats, Tags: tags, ToolIDs: activeToolIDs,
 				SmartMode: smartMode, EntropyMode: entropyMode, Unique: uniqueMode, ResumeFile: resumeFile, Silent: silent,
+				Notify: notify, NotifyInterval: notifyInterval,
 				Concurrency: concurrency,
 			})
 		}
@@ -335,6 +338,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&toolIDs, "workflow", "w", "", "workflow tool IDs")
 	rootCmd.PersistentFlags().StringVar(&resumeFile, "resume", "", "resume scan state")
 	rootCmd.PersistentFlags().StringVar(&processFile, "process", "", "process a previously saved JSON results file")
+	rootCmd.PersistentFlags().BoolVar(&notify, "notify", false, "enable progress notifications via 'notify'")
+	rootCmd.PersistentFlags().IntVar(&notifyInterval, "notify-interval", 10, "interval percentage for notifications")
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
 	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, csv, table)")
