@@ -53,6 +53,20 @@ type ScannerService struct {
 
 var au = aurora.NewAurora(true)
 
+// progressReader wraps an io.Reader to track progress
+type progressReader struct {
+	r       io.Reader
+	onRead  func(int)
+}
+
+func (pr *progressReader) Read(p []byte) (n int, err error) {
+	n, err = pr.r.Read(p)
+	if n > 0 && pr.onRead != nil {
+		pr.onRead(n)
+	}
+	return
+}
+
 func NewScannerService(cfg models.Config) (*ScannerService, error) {
 	engine, err := NewRipgrepEngine()
 	var fallback Engine
@@ -326,67 +340,37 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 		var globalBytesRead int64
 		var lastNotifiedPct int = -1
+		var progressMu sync.Mutex
 
 		for i, path := range targets {
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex {
 				if info, err := os.Stat(path); err == nil {
+					progressMu.Lock()
 					globalBytesRead += info.Size()
+					progressMu.Unlock()
 				}
 				continue
 			}
 
-			var fileReader io.ReadCloser
-			if path != "stdin" && path != "-" {
-				// totalSize check removed here because we use globalTotalSize
-			}
-
-			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
-				cmd := exec.CommandContext(ctx, "bash", "-c", s.Config.Input.PreProcess+" "+path)
-				if stdout, err := cmd.StdoutPipe(); err == nil {
-					if err := cmd.Start(); err == nil {
-						fileReader = stdout
-						go cmd.Wait()
-					}
+			var sourceReader io.ReadCloser
+			if path == "-" || path == "stdin" {
+				sourceReader = io.NopCloser(os.Stdin)
+			} else {
+				f, err := os.Open(path)
+				if err != nil {
+					slog.Error("Error opening file", "path", path, "error", err)
+					continue
 				}
+				sourceReader = f
 			}
 
-			if fileReader == nil {
-				if path == "-" || path == "stdin" {
-					fileReader = io.NopCloser(os.Stdin)
-				} else {
-					f, err := os.Open(path)
-					if err != nil {
-						slog.Error("Error opening file", "path", path, "error", err)
-						continue
-					}
-					fileReader = f
-				}
-			}
-
-			recs, err := s.Parser.GetRecords(ctx, fileReader, path)
-			if err != nil {
-				slog.Error("Error starting parser", "path", path, "error", err)
-				fileReader.Close()
-				continue
-			}
-
-			var lineCount int
-			var bytesRead int64
-			for rec := range recs {
-				lineCount = rec.Line
-				select {
-				case <-ctx.Done():
-					fileReader.Close()
-					close(recordChan)
-					return
-				case recordChan <- rec:
-				}
-
-				if lineCount%500 == 0 {
-					bytesInChunk := int64(len(rec.Content))
-					bytesRead += bytesInChunk
-					globalBytesRead += bytesInChunk
-
+			// Wrap source reader to track progress of RAW bytes (compressed or not)
+			trackedReader := &progressReader{
+				r: sourceReader,
+				onRead: func(n int) {
+					progressMu.Lock()
+					globalBytesRead += int64(n)
+					
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
@@ -406,24 +390,59 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 								lastNotifiedPct = pct
 							}
 						}
-
-						if !opts.Silent {
-							fmt.Fprintf(os.Stderr, "\r%s Total Progress: %d%% | Scanning %s: %d records", au.Cyan("[*]"), pct, filepath.Base(path), lineCount)
-						}
 					}
+					progressMu.Unlock()
+				},
+			}
 
-					if opts.ResumeFile != "" {
-						s.Resume.FileIndex = i
-						s.Resume.LineIndex = lineCount
-						s.Resume.Target = path
-						s.SaveResumeState(opts.ResumeFile)
+			var finalReader io.ReadCloser = io.NopCloser(trackedReader)
+
+			// If pre-process is set, pipe the tracked source into the command
+			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
+				// Use the command without the file path argument, piping from stdin instead
+				cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
+				cmd.Stdin = trackedReader
+				if stdout, err := cmd.StdoutPipe(); err == nil {
+					if err := cmd.Start(); err == nil {
+						finalReader = stdout
+						go cmd.Wait()
 					}
 				}
 			}
-			fileReader.Close()
+
+			recs, err := s.Parser.GetRecords(ctx, finalReader, path)
+			if err != nil {
+				slog.Error("Error starting parser", "path", path, "error", err)
+				sourceReader.Close()
+				continue
+			}
+
+			var lineCount int
+			for rec := range recs {
+				lineCount = rec.Line
+				select {
+				case <-ctx.Done():
+					sourceReader.Close()
+					close(recordChan)
+					return
+				case recordChan <- rec:
+				}
+
+				if !opts.Silent && lineCount%500 == 0 && globalTotalSize > 0 {
+					progressMu.Lock()
+					pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
+					if pct > 100 { pct = 100 }
+					fmt.Fprintf(os.Stderr, "\r%s Total Progress: %d%% | Scanning %s: %d records", au.Cyan("[*]"), pct, filepath.Base(path), lineCount)
+					progressMu.Unlock()
+				}
+			}
+			sourceReader.Close()
+			finalReader.Close()
+			
 			if !opts.Silent && globalTotalSize > 0 {
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
 			}
+
 			if opts.ResumeFile != "" {
 				s.Resume.FileIndex = i + 1
 				s.Resume.LineIndex = 0
