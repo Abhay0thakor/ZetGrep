@@ -6,9 +6,10 @@
 - [ ] Memory-pressure aware scan (pause if RAM usage exceeds 90%).
 
 ## Phase 2: Smart Resume & Deltas
-- [ ] Implement **Incremental Scanning** (only scan files that changed since last run).
+- [x] Implement **Incremental Scanning** (only scan files that changed since last run).
 - [ ] Add **Delta Reporting** (show only NEW findings compared to previous scan).
-- [ ] Cross-scan **Global Deduplication** using a persistent key-value store (e.g., Pebble or BadgerDB).
+- [x] Cross-scan **Global Deduplication** using a persistent key-value store (bbolt).
+
 
 ## Phase 3: Reporting & UI
 - [ ] Add **Live Web Dashboard** SSE streaming for multiple concurrent scans.

@@ -3,7 +3,9 @@ package scanner
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -20,6 +22,7 @@ import (
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
+	"github.com/Abhay0thakor/ZetGrep/pkg/state"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	"github.com/logrusorgru/aurora"
 )
@@ -32,6 +35,8 @@ type ScannerOptions struct {
 	SmartMode        bool
 	EntropyMode      bool
 	Unique           bool
+	Incremental      bool
+	GlobalDedupe     bool
 	ResumeFile       string
 	Silent           bool
 	Concurrency      int
@@ -40,6 +45,12 @@ type ScannerOptions struct {
 	CooldownEvery    int
 	CooldownTime     string
 	ThermalThreshold float64
+	StateDB          *state.DB
+}
+
+type HitCounter struct {
+	sync.Mutex
+	count int
 }
 
 type ScannerService struct {
@@ -199,13 +210,24 @@ func (s *ScannerService) sendNotification(msg string) {
 	}
 }
 
-func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, activeTools []models.Tool, hitCounter interface{}, resultChan chan<- *models.Result, ctx context.Context) {
+func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, activeTools []models.Tool, hc *HitCounter, resultChan chan<- *models.Result, ctx context.Context) {
 	if opts.Unique {
 		key := res.Pattern + ":" + res.Content
 		if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
 			PutResult(res)
 			return
 		}
+	}
+
+	if opts.GlobalDedupe && opts.StateDB != nil {
+		h := sha256.New()
+		h.Write([]byte(res.Pattern + ":" + res.Content))
+		hash := hex.EncodeToString(h.Sum(nil))
+		if opts.StateDB.IsDuplicate(hash) {
+			PutResult(res)
+			return
+		}
+		_ = opts.StateDB.MarkHit(hash)
 	}
 
 	if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
@@ -223,10 +245,7 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 		}
 	}
 
-	if hc, ok := hitCounter.(*struct {
-		sync.Mutex
-		count int
-	}); ok {
+	if hc != nil {
 		hc.Lock()
 		hc.count++
 		hc.Unlock()
@@ -303,10 +322,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		numWorkers = runtime.NumCPU() * 2
 	}
 
-	hitCounter := struct {
-		sync.Mutex
-		count int
-	}{}
+	hitCounter := &HitCounter{}
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
@@ -350,7 +366,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						res.Entropy = utils.ShannonEntropy(string(content))
 						res.Line = rec.Line
 						res.File = rec.File
-						s.handleMatch(res, opts, activeTools, &hitCounter, resultChan, ctx)
+						s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 					}
 				}
 
@@ -370,7 +386,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						res.Entropy = utils.ShannonEntropy(res.Content)
 						res.Line = rec.Line
 						res.File = rec.File
-						s.handleMatch(res, opts, activeTools, &hitCounter, resultChan, ctx)
+						s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 					}
 				}
 			}
@@ -408,6 +424,17 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					progressMu.Unlock()
 				}
 				continue
+			}
+
+			info, err := os.Stat(path)
+			if err == nil && opts.Incremental && opts.StateDB != nil {
+				if !opts.StateDB.ShouldScan(path, info.Size(), info.ModTime()) {
+					slog.Debug("Skipping unchanged file", "path", path)
+					progressMu.Lock()
+					globalBytesRead += info.Size()
+					progressMu.Unlock()
+					continue
+				}
 			}
 
 			var sourceReader io.ReadCloser
@@ -488,6 +515,10 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			sourceReader.Close()
 			finalReader.Close()
 			
+			if opts.Incremental && opts.StateDB != nil && err == nil {
+				_ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime())
+			}
+
 			if !opts.Silent && globalTotalSize > 0 {
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
 			}
@@ -562,7 +593,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 		return logs
 	}
 
-	var contents []string
+	var contents [][]byte
 	var idVal string = "unknown"
 
 	if s.Config.Input.Format == "csv" {
@@ -593,7 +624,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 
 		for _, idx := range targetIdxs {
 			if idx < len(record) {
-				contents = append(contents, record[idx])
+				contents = append(contents, []byte(record[idx]))
 			}
 		}
 	} else {
@@ -646,11 +677,11 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 			if targetField == "$" {
 				content = line
 				ok = true
-				logs = append(logs, fmt.Sprintf("%s Added target '$' (Raw Line)", au.Blue("[TARGET]")))
+				logs = append(logs, fmt.Sprintf("%s Added target '$' (Raw Line)", au.Bold(au.Blue("[TARGET]"))))
 			} else if err == nil {
 				content, ok = getNestedField(data, targetField)
 				if ok {
-					logs = append(logs, fmt.Sprintf("%s Found field '%s'.", au.Blue("[TARGET]"), targetField))
+					logs = append(logs, fmt.Sprintf("%s Found field '%s'.", au.Bold(au.Blue("[TARGET]")), targetField))
 				}
 			}
 
@@ -669,7 +700,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 						logs = append(logs, fmt.Sprintf("%s Transformation complete.", au.Green("[POST]")))
 					}
 				}
-				contents = append(contents, content)
+				contents = append(contents, []byte(content))
 			}
 		}
 	}
@@ -680,7 +711,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 	}
 
 	for _, content := range contents {
-		if content == "" {
+		if len(content) == 0 {
 			continue
 		}
 		for _, pName := range patterns {
@@ -696,8 +727,8 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 				logs = append(logs, fmt.Sprintf("%s Pattern '%s' invalid regex: %v", au.Red("[PATTERN]"), pName, rerr))
 				continue
 			}
-			if matches := re.FindAllStringSubmatch(content, -1); len(matches) > 0 {
-				logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in content: %s", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), content))
+			if matches := re.FindAllSubmatch(content, -1); len(matches) > 0 {
+				logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in content: %s", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), string(content)))
 			}
 		}
 	}

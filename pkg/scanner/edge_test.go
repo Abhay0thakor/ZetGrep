@@ -19,7 +19,7 @@ func TestLargeLine(t *testing.T) {
 	count := 0
 	for rec := range ch {
 		count++
-		if !strings.Contains(rec.Content, "1.1.1.1") {
+		if !strings.Contains(string(rec.Content), "1.1.1.1") {
 			t.Errorf("Expected line to contain 1.1.1.1")
 		}
 	}
@@ -46,7 +46,7 @@ func TestUnicodeInput(t *testing.T) {
 		t.Fatalf("Expected 2 records, got %d", len(records))
 	}
 	
-	if !strings.Contains(records[0].Content, "こんにちは") {
+	if !strings.Contains(string(records[0].Content), "こんにちは") {
 		t.Errorf("Unicode content mismatch in line 1")
 	}
 }

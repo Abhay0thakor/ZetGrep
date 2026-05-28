@@ -12,6 +12,7 @@ import (
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
+	"github.com/Abhay0thakor/ZetGrep/pkg/state"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	"github.com/logrusorgru/aurora"
 	"github.com/spf13/cobra"
@@ -58,8 +59,10 @@ var (
 	toolIDs        string
 	resumeFile     string
 	processFile    string
+	incremental    bool
+	globalDedupe   bool
 	notify         bool
-	notifyInterval   int
+	notifyInterval int
 	cooldownEvery    int
 	cooldownTime     string
 	thermalThreshold float64
@@ -183,6 +186,19 @@ var rootCmd = &cobra.Command{
 			slog.Error("Service initialization error", "error", err)
 			os.Exit(1)
 		}
+
+		var stateDB *state.DB
+		if incremental || globalDedupe {
+			dbPath := utils.ExpandPath("~/.config/gf/state.db")
+			os.MkdirAll(filepath.Dir(dbPath), 0755)
+			stateDB, err = state.Open(dbPath)
+			if err != nil {
+				slog.Error("Error opening state database", "error", err)
+			} else {
+				defer stateDB.Close()
+			}
+		}
+
 		for _, tf := range toolFiles {
 			if t, err := scanner.LoadToolFromFile(tf); err == nil {
 				svc.Tools = append(svc.Tools, t)
@@ -295,7 +311,10 @@ var rootCmd = &cobra.Command{
 				Notify: notify, NotifyInterval: notifyInterval,
 				CooldownEvery: cooldownEvery, CooldownTime: cooldownTime,
 				ThermalThreshold: thermalThreshold,
-				Concurrency: concurrency,
+				Incremental:      incremental,
+				GlobalDedupe:     globalDedupe,
+				StateDB:          stateDB,
+				Concurrency:      concurrency,
 			})
 		}
 
@@ -343,6 +362,8 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&toolIDs, "workflow", "w", "", "workflow tool IDs")
 	rootCmd.PersistentFlags().StringVar(&resumeFile, "resume", "", "resume scan state")
 	rootCmd.PersistentFlags().StringVar(&processFile, "process", "", "process a previously saved JSON results file")
+	rootCmd.PersistentFlags().BoolVar(&incremental, "incremental", false, "only scan files that changed since last run")
+	rootCmd.PersistentFlags().BoolVar(&globalDedupe, "global-dedupe", false, "skip findings seen in previous scans")
 	rootCmd.PersistentFlags().BoolVar(&notify, "notify", false, "enable progress notifications via 'notify'")
 	rootCmd.PersistentFlags().IntVar(&notifyInterval, "notify-interval", 10, "interval percentage for notifications")
 	rootCmd.PersistentFlags().IntVar(&cooldownEvery, "cooldown-every", 0, "pause scan every X percentage (e.g. 25)")
