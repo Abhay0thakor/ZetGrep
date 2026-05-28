@@ -3,9 +3,12 @@ module github.com/Abhay0thakor/ZetGrep
 go 1.25.5
 
 require (
+	github.com/buger/jsonparser v1.2.0
+	github.com/cloudflare/ahocorasick v0.0.0-20240916140611-054963ec9396
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/klauspost/compress v1.18.6
 	github.com/logrusorgru/aurora v2.0.3+incompatible
+	github.com/minio/simdjson-go v0.4.5
 	github.com/olekukonko/tablewriter v1.1.4
 	github.com/projectdiscovery/utils v0.9.0
 	github.com/spf13/cobra v1.10.2
@@ -25,6 +28,7 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.4.0 // indirect
 	github.com/gorilla/css v1.0.1 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/klauspost/cpuid/v2 v2.2.3 // indirect
 	github.com/kljensen/snowball v0.8.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect

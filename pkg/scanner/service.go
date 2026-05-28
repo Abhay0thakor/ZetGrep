@@ -15,6 +15,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/classifier"
@@ -24,20 +25,21 @@ import (
 )
 
 type ScannerOptions struct {
-	TargetPaths    []string
-	Patterns       []string
-	Tags           []string
-	ToolIDs        []string
-	SmartMode      bool
-	EntropyMode    bool
-	Unique         bool
-	ResumeFile     string
-	Silent         bool
-	Concurrency    int
-	Notify         bool
-	NotifyInterval int
-	CooldownEvery  int
-	CooldownTime   string
+	TargetPaths      []string
+	Patterns         []string
+	Tags             []string
+	ToolIDs          []string
+	SmartMode        bool
+	EntropyMode      bool
+	Unique           bool
+	ResumeFile       string
+	Silent           bool
+	Concurrency      int
+	Notify           bool
+	NotifyInterval   int
+	CooldownEvery    int
+	CooldownTime     string
+	ThermalThreshold float64
 }
 
 type ScannerService struct {
@@ -51,14 +53,14 @@ type ScannerService struct {
 	seenMatches  sync.Map
 	processSem   chan struct{}
 	Resume       models.ResumeConfig
+	isPaused     int32
 }
 
 var au = aurora.NewAurora(true)
 
-// progressReader wraps an io.Reader to track progress
 type progressReader struct {
-	r       io.Reader
-	onRead  func(int)
+	r      io.Reader
+	onRead func(int)
 }
 
 func (pr *progressReader) Read(p []byte) (n int, err error) {
@@ -104,7 +106,7 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 	var p Parser
 	switch cfg.Input.Format {
 	case "jsonl", "json":
-		p = &JSONLParser{Config: cfg.Input}
+		p = &FastJSONParser{Config: cfg.Input}
 	case "csv":
 		p = &CSVParser{Config: cfg.Input}
 	default:
@@ -197,14 +199,73 @@ func (s *ScannerService) sendNotification(msg string) {
 	}
 }
 
+func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, activeTools []models.Tool, hitCounter interface{}, resultChan chan<- *models.Result, ctx context.Context) {
+	if opts.Unique {
+		key := res.Pattern + ":" + res.Content
+		if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
+			PutResult(res)
+			return
+		}
+	}
+
+	if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
+		PutResult(res)
+		return
+	}
+	if opts.EntropyMode && res.Entropy < 3.5 {
+		PutResult(res)
+		return
+	}
+
+	for _, t := range activeTools {
+		if val, _ := s.executeToolWithLimit(t, *res); val != "" {
+			res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
+		}
+	}
+
+	if hc, ok := hitCounter.(*struct {
+		sync.Mutex
+		count int
+	}); ok {
+		hc.Lock()
+		hc.count++
+		hc.Unlock()
+	}
+
+	select {
+	case <-ctx.Done():
+		return
+	case resultChan <- res:
+	}
+}
+
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
 	resultChan := make(chan *models.Result, 1000)
+
+	if opts.ThermalThreshold > 0 {
+		go utils.MonitorThermal(opts.ThermalThreshold, opts.ThermalThreshold-15.0, func() {
+			atomic.StoreInt32(&s.isPaused, 1)
+			msg := fmt.Sprintf("🌡️ Thermal Protection: CPU temperature reached %.1f°C. Pausing scan...", opts.ThermalThreshold)
+			slog.Warn(msg)
+			if opts.Notify {
+				s.sendNotification(msg)
+			}
+		}, func() {
+			atomic.StoreInt32(&s.isPaused, 0)
+			msg := "🟢 CPU Cooled down. Resuming scan."
+			slog.Info(msg)
+			if opts.Notify {
+				s.sendNotification(msg)
+			}
+		})
+	}
 
 	var compiledPatterns []struct {
 		p    models.Pattern
 		comp *regexp.Regexp
 	}
+	literals := make(map[string]string)
 
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName)
@@ -214,21 +275,26 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		}
 
 		finalPattern := p.Pattern
-		if strings.Contains(p.Flags, "i") && !strings.HasPrefix(finalPattern, "(?i)") {
+		isCaseInsensitive := strings.Contains(p.Flags, "i")
+
+		if !isCaseInsensitive && IsLiteral(finalPattern) {
+			literals[finalPattern] = pName
+			continue
+		}
+
+		if isCaseInsensitive && !strings.HasPrefix(finalPattern, "(?i)") {
 			finalPattern = "(?i)" + finalPattern
 		}
 
 		if comp, err := regexp.Compile(finalPattern); err == nil {
-			slog.Debug("Compiled pattern", "name", pName, "regex", finalPattern)
 			compiledPatterns = append(compiledPatterns, struct {
 				p    models.Pattern
 				comp *regexp.Regexp
 			}{p, comp})
-		} else {
-			slog.Debug("Failed to compile pattern", "name", pName, "error", err)
 		}
 	}
 
+	litMatcher := NewLiteralMatcher(literals)
 	activeTools := s.getActiveTools(opts.ToolIDs)
 	recordChan := make(chan ScanRecord, 1000)
 	var wg sync.WaitGroup
@@ -247,9 +313,13 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		go func() {
 			defer wg.Done()
 			for rec := range recordChan {
+				for atomic.LoadInt32(&s.isPaused) == 1 {
+					time.Sleep(5 * time.Second)
+				}
+
 				content := rec.Content
 				if s.Config.Input.Decode {
-					content = unescapeContent(content)
+					content = []byte(unescapeContent(string(content)))
 				}
 
 				postCmd := ""
@@ -262,60 +332,45 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				if postCmd != "" {
 					var cmd *exec.Cmd
 					if runtime.GOOS == "windows" {
-						cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+content+" | "+postCmd)
+						cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+string(content)+" | "+postCmd)
 					} else {
-						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+postCmd)
+						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(string(content), "'", "'\\''")+"' | "+postCmd)
 					}
 					if out, err := cmd.Output(); err == nil {
-						content = strings.TrimSpace(string(out))
+						content = []byte(strings.TrimSpace(string(out)))
+					}
+				}
+
+				if litMatcher != nil {
+					matches := litMatcher.Match(string(content))
+					for _, m := range matches {
+						res := GetResult()
+						res.Pattern = m.Name
+						res.Content = m.Literal
+						res.Entropy = utils.ShannonEntropy(string(content))
+						res.Line = rec.Line
+						res.File = rec.File
+						s.handleMatch(res, opts, activeTools, &hitCounter, resultChan, ctx)
 					}
 				}
 
 				for _, cp := range compiledPatterns {
-					matches := cp.comp.FindAllStringSubmatch(content, -1)
+					matches := cp.comp.FindAllSubmatch(content, -1)
 					for _, matchGroup := range matches {
-						if len(matchGroup) == 0 || matchGroup[0] == "" {
+						if len(matchGroup) == 0 || len(matchGroup[0]) == 0 {
 							continue
 						}
 						res := GetResult()
 						res.Pattern = cp.p.Name
-						res.Content = matchGroup[0]
-						res.Matches = matchGroup
+						res.Content = string(matchGroup[0])
+						res.Matches = make([]string, len(matchGroup))
+						for idx, mg := range matchGroup {
+							res.Matches[idx] = string(mg)
+						}
 						res.Entropy = utils.ShannonEntropy(res.Content)
 						res.Line = rec.Line
 						res.File = rec.File
-
-						if opts.Unique {
-							key := res.Pattern + ":" + res.Content
-							if _, seen := s.seenMatches.LoadOrStore(key, true); seen {
-								PutResult(res)
-								continue
-							}
-						}
-
-						if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
-							PutResult(res)
-							continue
-						}
-						if opts.EntropyMode && res.Entropy < 3.5 {
-							PutResult(res)
-							continue
-						}
-						for _, t := range activeTools {
-							if val, _ := s.executeToolWithLimit(t, *res); val != "" {
-								res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
-							}
-						}
-						
-						hitCounter.Lock()
-						hitCounter.count++
-						hitCounter.Unlock()
-
-						select {
-						case <-ctx.Done():
-							return
-						case resultChan <- res:
-						}
+						s.handleMatch(res, opts, activeTools, &hitCounter, resultChan, ctx)
 					}
 				}
 			}
@@ -367,7 +422,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				sourceReader = f
 			}
 
-			// Wrap source reader to track progress of RAW bytes (compressed or not)
 			trackedReader := &progressReader{
 				r: sourceReader,
 				onRead: func(n int) {
@@ -379,7 +433,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
 
-						// 1. Notification Logic
 						if opts.Notify && pct > lastNotifiedPct {
 							shouldNotify := false
 							if pct < 95 {
@@ -396,33 +449,20 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 							}
 						}
 
-						// 2. Cooldown Logic
 						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
 							lastCooldownPct = pct
-							duration, err := time.ParseDuration(opts.CooldownTime)
-							if err == nil {
-								msg := fmt.Sprintf("❄️ Cooldown Cycle: Progress reached %d%%. Pausing for %s to cool down hardware...", pct, opts.CooldownTime)
-								slog.Info(msg)
-								if opts.Notify {
-									s.sendNotification(msg)
-								}
-								time.Sleep(duration)
-								resumeMsg := fmt.Sprintf("🚀 Cooldown finished. Resuming scan from %d%%.", pct)
-								slog.Info(resumeMsg)
-								if opts.Notify {
-									s.sendNotification(resumeMsg)
-								}
-							}
+							duration, _ := time.ParseDuration(opts.CooldownTime)
+							msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
+							slog.Info(msg)
+							if opts.Notify { s.sendNotification(msg) }
+							time.Sleep(duration)
 						}
 					}
 				},
 			}
 
 			var finalReader io.ReadCloser = io.NopCloser(trackedReader)
-
-			// If pre-process is set, pipe the tracked source into the command
 			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
-				// Use the command without the file path argument, piping from stdin instead
 				cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
 				cmd.Stdin = trackedReader
 				if stdout, err := cmd.StdoutPipe(); err == nil {
@@ -434,29 +474,15 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 
 			recs, err := s.Parser.GetRecords(ctx, finalReader, path)
-			if err != nil {
-				slog.Error("Error starting parser", "path", path, "error", err)
-				sourceReader.Close()
-				continue
-			}
-
-			var lineCount int
-			for rec := range recs {
-				lineCount = rec.Line
-				select {
-				case <-ctx.Done():
-					sourceReader.Close()
-					close(recordChan)
-					return
-				case recordChan <- rec:
-				}
-
-				if !opts.Silent && lineCount%500 == 0 && globalTotalSize > 0 {
-					progressMu.Lock()
-					pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
-					if pct > 100 { pct = 100 }
-					fmt.Fprintf(os.Stderr, "\r%s Total Progress: %d%% | Scanning %s: %d records", au.Cyan("[*]"), pct, filepath.Base(path), lineCount)
-					progressMu.Unlock()
+			if err == nil {
+				for rec := range recs {
+					select {
+					case <-ctx.Done():
+						sourceReader.Close()
+						finalReader.Close()
+						return
+					case recordChan <- rec:
+					}
 				}
 			}
 			sourceReader.Close()
@@ -464,13 +490,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			
 			if !opts.Silent && globalTotalSize > 0 {
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
-			}
-
-			if opts.ResumeFile != "" {
-				s.Resume.FileIndex = i + 1
-				s.Resume.LineIndex = 0
-				s.Resume.Target = ""
-				s.SaveResumeState(opts.ResumeFile)
 			}
 		}
 		close(recordChan)
@@ -481,7 +500,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			hitCounter.Lock()
 			finalHits := hitCounter.count
 			hitCounter.Unlock()
-			s.sendNotification(fmt.Sprintf("ZetGrep Completed! ✅\nTotal Duration: %s\nTotal Hits: %d\nTargets Processed: %d", duration, finalHits, len(targets)))
+			s.sendNotification(fmt.Sprintf("ZetGrep Completed! ✅\nDuration: %s\nHits: %d\nTargets: %d", duration, finalHits, len(targets)))
 		}
 	}()
 

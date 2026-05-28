@@ -32,3 +32,16 @@ func BenchmarkJSONLParser(b *testing.B) {
 	}
 }
 
+func BenchmarkFastJSONParser(b *testing.B) {
+	line := `{"id": "test", "content": "Sample 1.1.1.1"}` + "\n"
+	data := strings.Repeat(line, 1000)
+	parser := &FastJSONParser{Config: models.InputConfig{Target: "content"}}
+	
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		r := strings.NewReader(data)
+		ch, _ := parser.GetRecords(context.Background(), r, "test")
+		for range ch {}
+	}
+}
+

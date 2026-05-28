@@ -14,7 +14,7 @@ import (
 
 // ScanRecord represents a single unit of work (a line, a CSV row, etc.)
 type ScanRecord struct {
-	Content string
+	Content []byte
 	ID      string
 	Line    int
 	File    string
@@ -42,11 +42,16 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
+			// Use Bytes() instead of Text() to avoid allocation
+			line := scanner.Bytes()
+			content := make([]byte, len(line))
+			copy(content, line)
+
 			select {
 			case <-ctx.Done():
 				return
 			case out <- ScanRecord{
-				Content: scanner.Text(),
+				Content: content,
 				Line:    lineNum,
 				File:    path,
 			}:
@@ -106,7 +111,7 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 					if t == "$" {
 						select {
 						case <-ctx.Done(): return
-						case out <- ScanRecord{Content: line, Line: lineNum, File: path}:
+						case out <- ScanRecord{Content: []byte(line), Line: lineNum, File: path}:
 						}
 					}
 				}
@@ -144,7 +149,7 @@ func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path str
 					}
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal}:
+					case out <- ScanRecord{Content: []byte(content), Line: lineNum, File: displayFile, ID: idVal}:
 					}
 				}
 			}
@@ -204,9 +209,10 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 					if idVal != "" {
 						displayFile = fmt.Sprintf("%s:%s", path, idVal)
 					}
+					content := []byte(record[idx])
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: record[idx], Line: lineNum, File: displayFile, ID: idVal}:
+					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal}:
 					}
 				}
 			}
