@@ -45,6 +45,8 @@ type ScannerOptions struct {
 	CooldownEvery    int
 	CooldownTime     string
 	ThermalThreshold float64
+	MaxRAMThreshold  float64
+	AutoScale        bool
 	StateDB          *state.DB
 }
 
@@ -65,6 +67,7 @@ type ScannerService struct {
 	processSem   chan struct{}
 	Resume       models.ResumeConfig
 	isPaused     int32
+	isThrottled  int32
 }
 
 var au = aurora.NewAurora(true)
@@ -262,22 +265,50 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
 	resultChan := make(chan *models.Result, 1000)
 
+	// 1. Thermal Protection
 	if opts.ThermalThreshold > 0 {
 		go utils.MonitorThermal(opts.ThermalThreshold, opts.ThermalThreshold-15.0, func() {
 			atomic.StoreInt32(&s.isPaused, 1)
 			msg := fmt.Sprintf("🌡️ Thermal Protection: CPU temperature reached %.1f°C. Pausing scan...", opts.ThermalThreshold)
 			slog.Warn(msg)
-			if opts.Notify {
-				s.sendNotification(msg)
-			}
+			if opts.Notify { s.sendNotification(msg) }
 		}, func() {
 			atomic.StoreInt32(&s.isPaused, 0)
 			msg := "🟢 CPU Cooled down. Resuming scan."
 			slog.Info(msg)
-			if opts.Notify {
-				s.sendNotification(msg)
-			}
+			if opts.Notify { s.sendNotification(msg) }
 		})
+	}
+
+	// 2. RAM Pressure & Auto-Scaling
+	if opts.MaxRAMThreshold > 0 || opts.AutoScale {
+		go func() {
+			for {
+				stats, err := utils.GetSystemStats()
+				if err == nil {
+					if opts.MaxRAMThreshold > 0 && stats.RAMPercent >= opts.MaxRAMThreshold {
+						if atomic.LoadInt32(&s.isPaused) == 0 {
+							atomic.StoreInt32(&s.isPaused, 1)
+							msg := fmt.Sprintf("🚨 Memory Pressure: RAM usage reached %.1f%%. Pausing scan...", stats.RAMPercent)
+							slog.Warn(msg)
+							if opts.Notify { s.sendNotification(msg) }
+						}
+					} else if opts.MaxRAMThreshold > 0 && stats.RAMPercent < (opts.MaxRAMThreshold-10.0) {
+						if atomic.LoadInt32(&s.isPaused) == 1 {
+							atomic.StoreInt32(&s.isPaused, 0)
+							slog.Info("🟢 Memory pressure relieved. Resuming scan.")
+						}
+					}
+
+					if opts.AutoScale && stats.CPUUsage > 90.0 {
+						atomic.StoreInt32(&s.isThrottled, 1)
+					} else {
+						atomic.StoreInt32(&s.isThrottled, 0)
+					}
+				}
+				time.Sleep(10 * time.Second)
+			}
+		}()
 	}
 
 	var compiledPatterns []struct {
@@ -329,8 +360,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		go func() {
 			defer wg.Done()
 			for rec := range recordChan {
+				// System Check (Pause/Throttle)
 				for atomic.LoadInt32(&s.isPaused) == 1 {
 					time.Sleep(5 * time.Second)
+				}
+				if atomic.LoadInt32(&s.isThrottled) == 1 {
+					time.Sleep(100 * time.Millisecond)
 				}
 
 				content := rec.Content
@@ -429,7 +464,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			info, err := os.Stat(path)
 			if err == nil && opts.Incremental && opts.StateDB != nil {
 				if !opts.StateDB.ShouldScan(path, info.Size(), info.ModTime()) {
-					slog.Debug("Skipping unchanged file", "path", path)
 					progressMu.Lock()
 					globalBytesRead += info.Size()
 					progressMu.Unlock()
@@ -463,9 +497,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						if opts.Notify && pct > lastNotifiedPct {
 							shouldNotify := false
 							if pct < 95 {
-								if pct%opts.NotifyInterval == 0 {
-									shouldNotify = true
-								}
+								if pct%opts.NotifyInterval == 0 { shouldNotify = true }
 							} else {
 								shouldNotify = true
 							}

@@ -20,7 +20,7 @@ import (
 )
 
 var (
-	version = "v0.6.5"
+	version = "v0.6.9"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -63,10 +63,12 @@ var (
 	globalDedupe   bool
 	notify         bool
 	notifyInterval int
-	cooldownEvery    int
-	cooldownTime     string
+	cooldownEvery  int
+	cooldownTime   string
 	thermalThreshold float64
-	concurrency      int
+	maxRAMThreshold  float64
+	autoScale        bool
+	concurrency    int
 	dryRun         bool
 	format         string
 	patternFlag    string
@@ -310,7 +312,7 @@ var rootCmd = &cobra.Command{
 				SmartMode: smartMode, EntropyMode: entropyMode, Unique: uniqueMode, ResumeFile: resumeFile, Silent: silent,
 				Notify: notify, NotifyInterval: notifyInterval,
 				CooldownEvery: cooldownEvery, CooldownTime: cooldownTime,
-				ThermalThreshold: thermalThreshold,
+				ThermalThreshold: thermalThreshold, MaxRAMThreshold: maxRAMThreshold, AutoScale: autoScale,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,
@@ -366,12 +368,14 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&globalDedupe, "global-dedupe", false, "skip findings seen in previous scans")
 	rootCmd.PersistentFlags().BoolVar(&notify, "notify", false, "enable progress notifications via 'notify'")
 	rootCmd.PersistentFlags().IntVar(&notifyInterval, "notify-interval", 10, "interval percentage for notifications")
-	rootCmd.PersistentFlags().IntVar(&cooldownEvery, "cooldown-every", 0, "pause scan every X percentage (e.g. 25)")
-	rootCmd.PersistentFlags().StringVar(&cooldownTime, "cooldown-duration", "45m", "duration to pause for cooldown (e.g. 45m, 1h)")
+	rootCmd.PersistentFlags().IntVar(&cooldownEvery, "cooldown-every", 0, "pause scan every X percentage")
+	rootCmd.PersistentFlags().StringVar(&cooldownTime, "cooldown-duration", "45m", "duration to pause for cooldown")
 	rootCmd.PersistentFlags().Float64Var(&thermalThreshold, "thermal-threshold", 0, "CPU temperature threshold to pause scan (Celsius)")
+	rootCmd.PersistentFlags().Float64Var(&maxRAMThreshold, "max-ram", 0, "RAM usage percentage threshold to pause scan")
+	rootCmd.PersistentFlags().BoolVar(&autoScale, "auto-scale", false, "automatically scale concurrency based on system load")
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
-	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format (text, json, csv, table)")
+	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format")
 	rootCmd.PersistentFlags().StringVarP(&patternFlag, "pattern", "p", "", "pattern name to use")
 	rootCmd.PersistentFlags().StringVar(&targetField, "target", "", "target field in JSONL/CSV")
 	rootCmd.PersistentFlags().StringSliceVar(&targetFields, "targets", nil, "target fields to scan")
