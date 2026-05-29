@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.7.2"
+	version = "v0.7.3"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -69,6 +69,7 @@ var (
 	thermalThreshold float64
 	maxRAMThreshold  float64
 	autoScale        bool
+	useMmap          bool
 	webMode          bool
 	webPort          int
 	webhook          string
@@ -331,6 +332,7 @@ var rootCmd = &cobra.Command{
 				Notify: notify, NotifyInterval: notifyInterval,
 				CooldownEvery: cooldownEvery, CooldownTime: cooldownTime,
 				ThermalThreshold: thermalThreshold, MaxRAMThreshold: maxRAMThreshold, AutoScale: autoScale,
+				UseMmap:          useMmap,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,
@@ -394,6 +396,7 @@ func init() {
 	rootCmd.PersistentFlags().Float64Var(&thermalThreshold, "thermal-threshold", 0, "CPU temperature threshold to pause scan (Celsius)")
 	rootCmd.PersistentFlags().Float64Var(&maxRAMThreshold, "max-ram", 0, "RAM usage percentage threshold to pause scan")
 	rootCmd.PersistentFlags().BoolVar(&autoScale, "auto-scale", false, "automatically scale concurrency based on system load")
+	rootCmd.PersistentFlags().BoolVar(&useMmap, "mmap", true, "use memory-mapped files for faster access")
 	rootCmd.PersistentFlags().BoolVar(&webMode, "web", false, "launch live web dashboard during scan")
 	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 8080, "port for the live web dashboard")
 	rootCmd.PersistentFlags().StringVar(&webhook, "webhook", "", "webhook URL for notifications")

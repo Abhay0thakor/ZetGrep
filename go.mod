@@ -5,6 +5,7 @@ go 1.25.5
 require (
 	github.com/buger/jsonparser v1.2.0
 	github.com/cloudflare/ahocorasick v0.0.0-20240916140611-054963ec9396
+	github.com/edsrzf/mmap-go v1.2.0
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/klauspost/compress v1.18.6
 	github.com/logrusorgru/aurora v2.0.3+incompatible

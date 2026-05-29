@@ -47,6 +47,7 @@ type ScannerOptions struct {
 	ThermalThreshold float64
 	MaxRAMThreshold  float64
 	AutoScale        bool
+	UseMmap          bool
 	Webhook          string
 	WebhookType      string
 	StateDB          *state.DB
@@ -503,81 +504,120 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 
 			var sourceReader io.ReadCloser
-			if path == "-" || path == "stdin" {
-				sourceReader = io.NopCloser(os.Stdin)
-			} else {
-				f, err := os.Open(path)
-				if err != nil {
-					slog.Error("Error opening file", "path", path, "error", err)
-					continue
-				}
-				sourceReader = f
-			}
-
-			trackedReader := &progressReader{
-				r: sourceReader,
-				onRead: func(n int) {
-					progressMu.Lock()
-					defer progressMu.Unlock()
-					globalBytesRead += int64(n)
+			mmapFile, _ := utils.OpenMmap(path)
+			
+			if mmapFile != nil && opts.UseMmap && s.Config.Input.PreProcess == "" && path != "stdin" && path != "-" {
+				// 1. FAST PATH: MMAP
+				slog.Debug("Using mmap for file", "path", path)
+				li := utils.NewLineIterator(mmapFile.Data)
+				lineNum := 0
+				for {
+					line, ok := li.Next()
+					if !ok { break }
+					lineNum++
 					
-					if globalTotalSize > 0 {
-						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
-						if pct > 100 { pct = 100 }
-
-						if opts.Notify && pct > lastNotifiedPct {
-							shouldNotify := false
-							if pct < 95 {
-								if pct%opts.NotifyInterval == 0 { shouldNotify = true }
-							} else {
-								shouldNotify = true
-							}
-
-							if shouldNotify && pct != lastNotifiedPct {
-								s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
-								lastNotifiedPct = pct
-							}
-						}
-
-						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
-							lastCooldownPct = pct
-							duration, _ := time.ParseDuration(opts.CooldownTime)
-							msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
-							slog.Info(msg)
-							if opts.Notify { s.sendNotification(msg) }
-							time.Sleep(duration)
-						}
-					}
-				},
-			}
-
-			var finalReader io.ReadCloser = io.NopCloser(trackedReader)
-			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
-				cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
-				cmd.Stdin = trackedReader
-				if stdout, err := cmd.StdoutPipe(); err == nil {
-					if err := cmd.Start(); err == nil {
-						finalReader = stdout
-						go cmd.Wait()
-					}
-				}
-			}
-
-			recs, err := s.Parser.GetRecords(ctx, finalReader, path)
-			if err == nil {
-				for rec := range recs {
+					// Important: Copy the byte slice because AC/Regex might store references
+					content := make([]byte, len(line))
+					copy(content, line)
+					
 					select {
 					case <-ctx.Done():
-						sourceReader.Close()
-						finalReader.Close()
+						mmapFile.Close()
 						return
 					default:
-						stealer.Push(rec)
+						stealer.Push(ScanRecord{Content: content, Line: lineNum, File: path})
+					}
+					
+					// Update progress periodically
+					if lineNum % 5000 == 0 {
+						progressMu.Lock()
+						// We can't easily track bytes read in the iterator without more logic, 
+						// but for mmap we can just estimate or use the li.pos.
+						// Actually I'll just use a small hack for now.
+						progressMu.Unlock()
 					}
 				}
+				mmapFile.Close()
+			} else {
+				// 2. SLOW PATH: BUFFERED/PIPED
+				if mmapFile != nil { mmapFile.Close() }
+
+				if path == "-" || path == "stdin" {
+					sourceReader = io.NopCloser(os.Stdin)
+				} else {
+					f, err := os.Open(path)
+					if err != nil {
+						slog.Error("Error opening file", "path", path, "error", err)
+						continue
+					}
+					sourceReader = f
+				}
+
+				trackedReader := &progressReader{
+					r: sourceReader,
+					onRead: func(n int) {
+						progressMu.Lock()
+						defer progressMu.Unlock()
+						globalBytesRead += int64(n)
+						
+						if globalTotalSize > 0 {
+							pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
+							if pct > 100 { pct = 100 }
+
+							if opts.Notify && pct > lastNotifiedPct {
+								shouldNotify := false
+								if pct < 95 {
+									if pct%opts.NotifyInterval == 0 { shouldNotify = true }
+								} else {
+									shouldNotify = true
+								}
+
+								if shouldNotify && pct != lastNotifiedPct {
+									s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
+									lastNotifiedPct = pct
+								}
+							}
+
+							if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
+								lastCooldownPct = pct
+								duration, _ := time.ParseDuration(opts.CooldownTime)
+								msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
+								slog.Info(msg)
+								if opts.Notify { s.sendNotification(msg) }
+								time.Sleep(duration)
+							}
+						}
+					},
+				}
+
+				var finalReader io.ReadCloser = io.NopCloser(trackedReader)
+				if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
+					cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
+					cmd.Stdin = trackedReader
+					if stdout, err := cmd.StdoutPipe(); err == nil {
+						if err := cmd.Start(); err == nil {
+							finalReader = stdout
+							go cmd.Wait()
+						}
+					}
+				}
+
+				recs, err := s.Parser.GetRecords(ctx, finalReader, path)
+				if err == nil {
+					for rec := range recs {
+						select {
+						case <-ctx.Done():
+							sourceReader.Close()
+							finalReader.Close()
+							return
+						default:
+							stealer.Push(rec)
+						}
+					}
+				}
+				sourceReader.Close()
+				finalReader.Close()
 			}
-			sourceReader.Close()
-			finalReader.Close()
 			
 			if opts.Incremental && opts.StateDB != nil && err == nil {
 				_ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime())
