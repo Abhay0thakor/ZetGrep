@@ -57,6 +57,7 @@ type ScannerOptions struct {
 	AutoScale        bool
 	UsePcre          bool
 	UseMmap          bool
+	UseBloom         bool
 	Webhook          string
 	WebhookType      string
 	StateDB          *state.DB
@@ -344,6 +345,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	}
 
 	var compiledPatterns []CompiledPattern
+	var activePatterns []models.Pattern
 	literals := make(map[string]string)
 
 	for _, pName := range opts.Patterns {
@@ -351,6 +353,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		if err != nil {
 			continue
 		}
+		activePatterns = append(activePatterns, p)
 
 		finalPattern := p.Pattern
 		isCaseInsensitive := strings.Contains(p.Flags, "i")
@@ -361,11 +364,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		}
 
 		if opts.UsePcre {
-			opts := regexp2.None
+			regOpts := regexp2.None
 			if isCaseInsensitive {
-				opts = regexp2.IgnoreCase
+				regOpts = regexp2.IgnoreCase
 			}
-			if re, err := regexp2.Compile(finalPattern, opts); err == nil {
+			if re, err := regexp2.Compile(finalPattern, regOpts); err == nil {
 				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, pcre: re})
 			}
 		} else {
@@ -379,6 +382,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	}
 
 	litMatcher := NewLiteralMatcher(literals)
+	
+	var preFilter *PreFilter
+	if opts.UseBloom {
+		preFilter = NewPreFilter(activePatterns)
+	}
+
 	activeTools := s.getActiveTools(opts.ToolIDs)
 	recordChan := make(chan ScanRecord, 1000)
 	var wg sync.WaitGroup
@@ -402,6 +411,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 
 				content := rec.Content
+				
+				// Fast-path 0: Bloom Pre-Filter
+				if preFilter != nil && !preFilter.MayMatch(content) {
+					continue
+				}
+
 				if s.Config.Input.Decode {
 					content = []byte(unescapeContent(string(content)))
 				}

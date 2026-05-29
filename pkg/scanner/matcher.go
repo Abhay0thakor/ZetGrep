@@ -1,7 +1,11 @@
 package scanner
 
 import (
+	"regexp"
 	"strings"
+
+	"github.com/Abhay0thakor/ZetGrep/pkg/models"
+	"github.com/bits-and-blooms/bloom/v3"
 	"github.com/cloudflare/ahocorasick"
 )
 
@@ -73,4 +77,64 @@ func IsLiteral(p string) bool {
 		}
 	}
 	return true
+}
+
+// PreFilter uses a Bloom Filter to quickly discard lines that definitely don't match any pattern
+type PreFilter struct {
+	filter *bloom.BloomFilter
+}
+
+func NewPreFilter(patterns []models.Pattern) *PreFilter {
+	// Estimate capacity: Number of patterns * average keywords
+	capacity := uint(len(patterns) * 5)
+	if capacity < 1000 {
+		capacity = 1000
+	}
+	f := bloom.NewWithEstimates(capacity, 0.01)
+
+	added := 0
+	keywordRe := regexp.MustCompile(`[a-zA-Z0-9]{3,}`)
+	for _, p := range patterns {
+		// Extract potential keywords from regex
+		keywords := keywordRe.FindAllString(p.Pattern, -1)
+		for _, kw := range keywords {
+			f.Add([]byte(strings.ToLower(kw)))
+			added++
+		}
+	}
+
+	if added == 0 {
+		return nil
+	}
+
+	return &PreFilter{filter: f}
+}
+
+func (pf *PreFilter) MayMatch(content []byte) bool {
+	if pf == nil || pf.filter == nil {
+		return true
+	}
+	
+	// Tokenize content loosely (by common delimiters)
+	// We use a simpler regex for speed here
+	keywordRe := regexp.MustCompile(`[a-zA-Z0-9]{3,}`)
+	tokens := keywordRe.FindAll(content, -1)
+	for _, token := range tokens {
+		if pf.filter.Test(bytesToLower(token)) {
+			return true // Found a potential match
+		}
+	}
+	return false
+}
+
+func bytesToLower(b []byte) []byte {
+	res := make([]byte, len(b))
+	for i, c := range b {
+		if c >= 'A' && c <= 'Z' {
+			res[i] = c + ('a' - 'A')
+		} else {
+			res[i] = c
+		}
+	}
+	return res
 }

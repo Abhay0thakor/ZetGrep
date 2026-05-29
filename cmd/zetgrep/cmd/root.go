@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.7.4"
+	version = "v0.7.5"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -71,6 +71,7 @@ var (
 	thermalThreshold float64
 	maxRAMThreshold  float64
 	autoScale        bool
+	useBloom         bool
 	useMmap          bool
 	webMode          bool
 	webPort          int
@@ -334,6 +335,7 @@ var rootCmd = &cobra.Command{
 				ThermalThreshold: thermalThreshold, MaxRAMThreshold: maxRAMThreshold, AutoScale: autoScale,
 				UsePcre:          usePcre,
 				UseMmap:          useMmap,
+				UseBloom:         useBloom,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,
@@ -399,6 +401,7 @@ func init() {
 	rootCmd.PersistentFlags().Float64Var(&thermalThreshold, "thermal-threshold", 0, "CPU temperature threshold to pause scan (Celsius)")
 	rootCmd.PersistentFlags().Float64Var(&maxRAMThreshold, "max-ram", 0, "RAM usage percentage threshold to pause scan")
 	rootCmd.PersistentFlags().BoolVar(&autoScale, "auto-scale", false, "automatically scale concurrency based on system load")
+	rootCmd.PersistentFlags().BoolVar(&useBloom, "bloom", true, "use Bloom Filter for rapid negative match skipping")
 	rootCmd.PersistentFlags().BoolVar(&useMmap, "mmap", true, "use memory-mapped files for faster access")
 	rootCmd.PersistentFlags().BoolVar(&webMode, "web", false, "launch live web dashboard during scan")
 	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 8080, "port for the live web dashboard")

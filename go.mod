@@ -3,6 +3,7 @@ module github.com/Abhay0thakor/ZetGrep
 go 1.25.5
 
 require (
+	github.com/bits-and-blooms/bloom/v3 v3.7.1
 	github.com/buger/jsonparser v1.2.0
 	github.com/cloudflare/ahocorasick v0.0.0-20240916140611-054963ec9396
 	github.com/dlclark/regexp2 v1.12.0
@@ -23,6 +24,7 @@ require (
 require (
 	github.com/asaskevich/govalidator v0.0.0-20230301143203-a9d515a09cc2 // indirect
 	github.com/aymerick/douceur v0.2.0 // indirect
+	github.com/bits-and-blooms/bitset v1.24.2 // indirect
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	github.com/clipperhouse/displaywidth v0.10.0 // indirect
 	github.com/clipperhouse/uax29/v2 v2.6.0 // indirect
