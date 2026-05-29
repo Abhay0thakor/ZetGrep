@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Abhay0thakor/ZetGrep/pkg/api"
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
 	"github.com/Abhay0thakor/ZetGrep/pkg/state"
@@ -20,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.6.9"
+	version = "v0.7.1"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -68,7 +69,11 @@ var (
 	thermalThreshold float64
 	maxRAMThreshold  float64
 	autoScale        bool
-	concurrency    int
+	webMode          bool
+	webPort          int
+	webhook          string
+	webhookType      string
+	concurrency      int
 	dryRun         bool
 	format         string
 	patternFlag    string
@@ -299,6 +304,19 @@ var rootCmd = &cobra.Command{
 			return
 		}
 
+		// Web Dashboard Setup
+		var resultHook func(*models.Result)
+		if webMode {
+			server := api.NewServer(webPort)
+			go func() {
+				slog.Info("Live Web Dashboard started", "url", fmt.Sprintf("http://localhost:%d", webPort))
+				if err := server.Start(); err != nil {
+					slog.Error("Web Dashboard Error", "error", err)
+				}
+			}()
+			resultHook = server.Broadcast
+		}
+
 		ctx := context.Background()
 		var resultChan <-chan *models.Result
 		var scanErr error
@@ -316,6 +334,9 @@ var rootCmd = &cobra.Command{
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,
+				ResultHook:       resultHook,
+				Webhook:          webhook,
+				WebhookType:      webhookType,
 				Concurrency:      concurrency,
 			})
 		}
@@ -373,6 +394,10 @@ func init() {
 	rootCmd.PersistentFlags().Float64Var(&thermalThreshold, "thermal-threshold", 0, "CPU temperature threshold to pause scan (Celsius)")
 	rootCmd.PersistentFlags().Float64Var(&maxRAMThreshold, "max-ram", 0, "RAM usage percentage threshold to pause scan")
 	rootCmd.PersistentFlags().BoolVar(&autoScale, "auto-scale", false, "automatically scale concurrency based on system load")
+	rootCmd.PersistentFlags().BoolVar(&webMode, "web", false, "launch live web dashboard during scan")
+	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 8080, "port for the live web dashboard")
+	rootCmd.PersistentFlags().StringVar(&webhook, "webhook", "", "webhook URL for notifications")
+	rootCmd.PersistentFlags().StringVar(&webhookType, "webhook-type", "generic", "webhook type (slack, discord, generic)")
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
 	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format")

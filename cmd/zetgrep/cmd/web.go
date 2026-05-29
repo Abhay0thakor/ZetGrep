@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"fmt"
 	"log/slog"
 	"os"
 
@@ -21,12 +22,16 @@ var webCmd = &cobra.Command{
 			slog.Error("Error loading configuration", "error", err)
 			os.Exit(1)
 		}
-		svc, err := scanner.NewScannerService(finalCfg)
+		_, err = scanner.NewScannerService(finalCfg)
 		if err != nil {
 			slog.Error("Service initialization error", "error", err)
 			os.Exit(1)
 		}
-		srv := api.NewServer(webAddr, svc)
+		port := 8080
+		if webAddr != "" {
+			fmt.Sscanf(webAddr, ":%d", &port)
+		}
+		srv := api.NewServer(port)
 		if err := srv.Start(); err != nil {
 			slog.Error("Web Dashboard Error", "error", err)
 			os.Exit(1)

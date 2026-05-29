@@ -47,7 +47,10 @@ type ScannerOptions struct {
 	ThermalThreshold float64
 	MaxRAMThreshold  float64
 	AutoScale        bool
+	Webhook          string
+	WebhookType      string
 	StateDB          *state.DB
+	ResultHook       func(*models.Result)
 }
 
 type HitCounter struct {
@@ -252,6 +255,20 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 		hc.Lock()
 		hc.count++
 		hc.Unlock()
+	}
+
+	if opts.ResultHook != nil {
+		opts.ResultHook(res)
+	}
+
+	if opts.Webhook != "" {
+		// Only send high-signal matches to webhooks to avoid spam/rate-limits
+		isHighSignal := s.Classifier.Classify(res.Content) == "high-interest" || res.Entropy > 5.0
+		if isHighSignal {
+			msg := fmt.Sprintf("🎯 **ZetGrep Alert**\n**Pattern**: %s\n**File**: %s:%d\n**Content**: `%s`", 
+				res.Pattern, res.File, res.Line, res.Content)
+			go utils.SendWebhook(opts.Webhook, opts.WebhookType, msg)
+		}
 	}
 
 	select {
