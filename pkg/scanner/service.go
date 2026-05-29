@@ -60,6 +60,7 @@ type ScannerOptions struct {
 	UseBloom         bool
 	Webhook          string
 	WebhookType      string
+	WebhookLevel     string
 	StateDB          *state.DB
 	ResultHook       func(*models.Result)
 }
@@ -213,22 +214,60 @@ func (s *ScannerService) sendNotification(msg string) {
 	_ = cmd.Run()
 }
 
-func (s *ScannerService) sendWebhook(url, wType string, res *models.Result) {
+func (s *ScannerService) sendWebhook(url, wType, level string, res *models.Result) {
+	// Filter by level
+	if level == "high-interest" && s.Classifier.Classify(res.Content) != "high-interest" {
+		return
+	}
+	if level == "entropy" && res.Entropy < 4.0 {
+		return
+	}
+
 	var payload interface{}
 	switch wType {
 	case "slack":
-		payload = map[string]string{"text": fmt.Sprintf("🎯 *ZetGrep Hit*: [%s] %s\n`%s`", res.Pattern, res.File, res.Content)}
+		payload = map[string]interface{}{
+			"blocks": []map[string]interface{}{
+				{
+					"type": "section",
+					"text": map[string]string{
+						"type": "mrkdwn",
+						"text": fmt.Sprintf("🎯 *ZetGrep Hit*: `%s`", res.Pattern),
+					},
+				},
+				{
+					"type": "section",
+					"fields": []map[string]string{
+						{"type": "mrkdwn", "text": fmt.Sprintf("*File:*\n%s", res.File)},
+						{"type": "mrkdwn", "text": fmt.Sprintf("*Line:*\n%d", res.Line)},
+						{"type": "mrkdwn", "text": fmt.Sprintf("*Entropy:*\n%.2f", res.Entropy)},
+					},
+				},
+				{
+					"type": "section",
+					"text": map[string]string{
+						"type": "mrkdwn",
+						"text": fmt.Sprintf("*Content:*\n```%s```", res.Content),
+					},
+				},
+			},
+		}
 	case "discord":
+		color := 15844367 // Yellow
+		if res.Entropy > 4.5 {
+			color = 15548997 // Red
+		}
 		payload = map[string]interface{}{
 			"embeds": []map[string]interface{}{
 				{
 					"title":       "ZetGrep Match Found",
-					"description": res.Content,
-					"fields": []map[string]string{
-						{"name": "Pattern", "value": res.Pattern, "inline": "true"},
-						{"name": "File", "value": fmt.Sprintf("%s:%d", res.File, res.Line), "inline": "true"},
+					"description": fmt.Sprintf("```%s```", res.Content),
+					"fields": []map[string]interface{}{
+						{"name": "Pattern", "value": res.Pattern, "inline": true},
+						{"name": "Location", "value": fmt.Sprintf("%s:%d", res.File, res.Line), "inline": true},
+						{"name": "Entropy", "value": fmt.Sprintf("%.2f", res.Entropy), "inline": true},
 					},
-					"color": 15844367, // Yellow
+					"color": color,
 				},
 			},
 		}
@@ -237,7 +276,7 @@ func (s *ScannerService) sendWebhook(url, wType string, res *models.Result) {
 	}
 
 	b, _ := json.Marshal(payload)
-	http.Post(url, "application/json", bytes.NewBuffer(b))
+	_, _ = http.Post(url, "application/json", bytes.NewBuffer(b))
 }
 
 func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, activeTools []models.Tool, hc *HitCounter, resultChan chan<- *models.Result, ctx context.Context) {
@@ -286,7 +325,7 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 	}
 
 	if opts.Webhook != "" {
-		go s.sendWebhook(opts.Webhook, opts.WebhookType, res)
+		go s.sendWebhook(opts.Webhook, opts.WebhookType, opts.WebhookLevel, res)
 	}
 
 	select {

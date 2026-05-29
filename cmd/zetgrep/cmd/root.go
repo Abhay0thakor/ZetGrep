@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.7.5"
+	version = "v0.7.6"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -77,6 +77,7 @@ var (
 	webPort          int
 	webhook          string
 	webhookType      string
+	webhookLevel     string
 	concurrency      int
 	dryRun         bool
 	format         string
@@ -342,6 +343,7 @@ var rootCmd = &cobra.Command{
 				ResultHook:       resultHook,
 				Webhook:          webhook,
 				WebhookType:      webhookType,
+				WebhookLevel:     webhookLevel,
 				Concurrency:      concurrency,
 			})
 		}
@@ -407,6 +409,7 @@ func init() {
 	rootCmd.PersistentFlags().IntVar(&webPort, "web-port", 8080, "port for the live web dashboard")
 	rootCmd.PersistentFlags().StringVar(&webhook, "webhook", "", "webhook URL for notifications")
 	rootCmd.PersistentFlags().StringVar(&webhookType, "webhook-type", "generic", "webhook type (slack, discord, generic)")
+	rootCmd.PersistentFlags().StringVar(&webhookLevel, "webhook-level", "all", "minimum level to notify via webhook (all, high-interest, entropy)")
 	rootCmd.PersistentFlags().IntVarP(&concurrency, "concurrency", "c", 0, "number of concurrent workers")
 	rootCmd.PersistentFlags().BoolVar(&dryRun, "dry-run", false, "show what would be done")
 	rootCmd.PersistentFlags().StringVarP(&format, "format", "f", "text", "output format")
