@@ -389,9 +389,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName)
-		if err != nil {
-			continue
-		}
+		if err != nil { continue }
 		activePatterns = append(activePatterns, p)
 
 		finalPattern := p.Pattern
@@ -404,9 +402,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 		if opts.UsePcre {
 			regOpts := regexp2.None
-			if isCaseInsensitive {
-				regOpts = regexp2.IgnoreCase
-			}
+			if isCaseInsensitive { regOpts = regexp2.IgnoreCase }
 			if re, err := regexp2.Compile(finalPattern, regOpts); err == nil {
 				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, pcre: re})
 			}
@@ -421,19 +417,14 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	}
 
 	litMatcher := NewLiteralMatcher(literals)
-	
 	var preFilter *PreFilter
-	if opts.UseBloom {
-		preFilter = NewPreFilter(activePatterns)
-	}
+	if opts.UseBloom { preFilter = NewPreFilter(activePatterns) }
 
 	activeTools := s.getActiveTools(opts.ToolIDs)
 	recordChan := make(chan ScanRecord, 1000)
 	var wg sync.WaitGroup
 	numWorkers := opts.Concurrency
-	if numWorkers <= 0 {
-		numWorkers = runtime.NumCPU() * 2
-	}
+	if numWorkers <= 0 { numWorkers = runtime.NumCPU() * 2 }
 
 	hitCounter := &HitCounter{}
 
@@ -442,41 +433,19 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		go func() {
 			defer wg.Done()
 			for rec := range recordChan {
-				for atomic.LoadInt32(&s.isPaused) == 1 {
-					time.Sleep(5 * time.Second)
-				}
-				if atomic.LoadInt32(&s.isThrottled) == 1 {
-					time.Sleep(100 * time.Millisecond)
-				}
+				for atomic.LoadInt32(&s.isPaused) == 1 { time.Sleep(5 * time.Second) }
+				if atomic.LoadInt32(&s.isThrottled) == 1 { time.Sleep(100 * time.Millisecond) }
 
 				content := rec.Content
-				
-				// Fast-path 0: Bloom Pre-Filter
 				if preFilter != nil && !preFilter.MayMatch(content) {
+					PutBuffer(content)
 					continue
 				}
 
 				if s.Config.Input.Decode {
-					content = []byte(unescapeContent(string(content)))
-				}
-
-				postCmd := ""
-				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok {
-					postCmd = cmd
-				} else if cmd, ok := s.Config.Input.PostProcess["$"]; ok {
-					postCmd = cmd
-				}
-
-				if postCmd != "" {
-					var cmd *exec.Cmd
-					if runtime.GOOS == "windows" {
-						cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+string(content)+" | "+postCmd)
-					} else {
-						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(string(content), "'", "'\\''")+"' | "+postCmd)
-					}
-					if out, err := cmd.Output(); err == nil {
-						content = []byte(strings.TrimSpace(string(out)))
-					}
+					decoded := []byte(unescapeContent(string(content)))
+					PutBuffer(content)
+					content = decoded
 				}
 
 				if litMatcher != nil {
@@ -506,16 +475,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					} else if cp.re != nil {
 						matches := cp.re.FindAllSubmatch(content, -1)
 						for _, matchGroup := range matches {
-							if len(matchGroup) == 0 || len(matchGroup[0]) == 0 {
-								continue
-							}
+							if len(matchGroup) == 0 || len(matchGroup[0]) == 0 { continue }
 							res := GetResult()
 							res.Pattern = cp.p.Name
 							res.Content = string(matchGroup[0])
 							res.Matches = make([]string, len(matchGroup))
-							for idx, mg := range matchGroup {
-								res.Matches[idx] = string(mg)
-							}
+							for idx, mg := range matchGroup { res.Matches[idx] = string(mg) }
 							res.Entropy = utils.ShannonEntropy(res.Content)
 							res.Line = rec.Line
 							res.File = rec.File
@@ -523,6 +488,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						}
 					}
 				}
+				PutBuffer(content)
 			}
 		}()
 	}
@@ -532,17 +498,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		startTime := time.Now()
 		var innerWg sync.WaitGroup
 		innerWg.Add(1)
-		go func() {
-			defer innerWg.Done()
-			wg.Wait()
-		}()
+		go func() { defer innerWg.Done(); wg.Wait() }()
 
 		targets := s.resolveTargets(opts.TargetPaths)
 		var globalTotalSize int64
 		for _, path := range targets {
-			if info, err := os.Stat(path); err == nil {
-				globalTotalSize += info.Size()
-			}
+			if info, err := os.Stat(path); err == nil { globalTotalSize += info.Size() }
 		}
 
 		var globalBytesRead int64
@@ -571,13 +532,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 
 			var sourceReader io.ReadCloser
-			if path == "-" || path == "stdin" {
-				sourceReader = io.NopCloser(os.Stdin)
-			} else {
+			if path == "-" || path == "stdin" { sourceReader = io.NopCloser(os.Stdin) } else {
 				f, err := os.Open(path)
-				if err != nil {
-					continue
-				}
+				if err != nil { continue }
 				sourceReader = f
 			}
 
@@ -636,13 +593,8 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			sourceReader.Close()
 			finalReader.Close()
 			
-			if opts.Incremental && opts.StateDB != nil && err == nil {
-				_ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime())
-			}
-
-			if !opts.Silent && globalTotalSize > 0 {
-				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
-			}
+			if opts.Incremental && opts.StateDB != nil && err == nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
+			if !opts.Silent && globalTotalSize > 0 { fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path)) }
 		}
 		close(recordChan)
 		innerWg.Wait()

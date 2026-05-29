@@ -22,6 +22,24 @@ var resultPool = sync.Pool{
 	},
 }
 
+var bufferPool = sync.Pool{
+	New: func() interface{} {
+		// 1MB default buffer size
+		return make([]byte, 1024*1024)
+	},
+}
+
+func GetBuffer() []byte {
+	return bufferPool.Get().([]byte)
+}
+
+func PutBuffer(b []byte) {
+	if cap(b) < 1024*1024 {
+		return
+	}
+	bufferPool.Put(b[:0])
+}
+
 func GetResult() *models.Result {
 	r := resultPool.Get().(*models.Result)
 	r.Reset()

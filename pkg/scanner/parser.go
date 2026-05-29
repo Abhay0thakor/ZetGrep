@@ -42,13 +42,19 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 		lineNum := 0
 		for scanner.Scan() {
 			lineNum++
-			// Use Bytes() instead of Text() to avoid allocation
 			line := scanner.Bytes()
-			content := make([]byte, len(line))
+			
+			// Use pooled buffer for content
+			content := GetBuffer()
+			if cap(content) < len(line) {
+				content = make([]byte, len(line))
+			}
+			content = content[:len(line)]
 			copy(content, line)
 
 			select {
 			case <-ctx.Done():
+				PutBuffer(content)
 				return
 			case out <- ScanRecord{
 				Content: content,
