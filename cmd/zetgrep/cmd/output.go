@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
+	"github.com/Abhay0thakor/ZetGrep/pkg/report"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
 	"github.com/klauspost/compress/zstd"
 	"github.com/olekukonko/tablewriter"
@@ -61,6 +62,8 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	// 1. Setup Stream Routing
 	uiOut := os.Stderr
 	dataOut := os.Stdout
+
+	var htmlResults []*models.Result
 
 	// New Dedicated Multi-Output Streams
 	jsonSW, err := newSmartWriter(outputJSON)
@@ -113,6 +116,10 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	for res := range resultChan {
 		hitCount++
 
+		if outputHTML != "" {
+			htmlResults = append(htmlResults, res)
+		}
+
 		// Generate the Professional UI string
 		entropyStr := ""
 		if res.Entropy > 4.0 {
@@ -131,6 +138,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 
 		// B. Save Pro UI to dedicated text file (oT)
 		if textSW != nil {
+			// Strip ANSI colors for file output
 			fmt.Fprint(textSW, stripANSI(proUI))
 		}
 
@@ -199,6 +207,21 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		reportFile.Close()
 	}
 
+	// Generate HTML Intelligence Report
+	if outputHTML != "" {
+		reportData := report.ReportData{
+			Title:     "ZetGrep Scan Results",
+			StartTime: start,
+			EndTime:   time.Now(),
+			Duration:  time.Since(start).Round(time.Millisecond).String(),
+			TotalHits: hitCount,
+			Results:   htmlResults,
+		}
+		if err := report.GenerateHTMLReport(reportData, outputHTML); err != nil {
+			slog.Error("Error generating HTML report", "error", err)
+		}
+	}
+
 	// Summary
 	duration := time.Since(start).Round(time.Millisecond)
 	fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
@@ -207,6 +230,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	var saved []string
 	if outputJSON != "" { saved = append(saved, outputJSON) }
 	if outputText != "" { saved = append(saved, outputText) }
+	if outputHTML != "" { saved = append(saved, outputHTML) }
 	if outputFile != "" { saved = append(saved, outputFile) }
 	
 	if len(saved) > 0 {

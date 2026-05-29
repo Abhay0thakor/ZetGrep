@@ -13,5 +13,6 @@
 
 ## Phase 3: Reporting & UI
 - [x] Add **Live Web Dashboard** SSE streaming for multiple concurrent scans.
-- [ ] Implement **Templated PDF Reports** with visualization charts.
-- [ ] Add **Slack/Discord/Webhook** interactive integrations.
+- [x] Implement **Professional HTML Reports** with visualization charts (v0.7.1).
+- [x] Add **Slack/Discord/Webhook** interactive integrations.
+

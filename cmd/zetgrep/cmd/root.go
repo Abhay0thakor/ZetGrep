@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.7.3"
+	version = "v0.7.4"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -57,6 +57,7 @@ var (
 	outputFile     string
 	outputJSON     string
 	outputText     string
+	outputHTML     string
 	outputTemplate string
 	toolIDs        string
 	resumeFile     string
@@ -177,15 +178,68 @@ var rootCmd = &cobra.Command{
 			mergeInputConfigs(&finalCfg.Input, inc)
 		}
 
+		// Resolve targets before format detection
+		var targets []string
+		if stdin {
+			targets = []string{"stdin"}
+		} else if listFile != "" {
+			f, err := os.Open(utils.ExpandPath(listFile))
+			if err != nil {
+				slog.Error("Error opening list file", "path", listFile, "error", err)
+				os.Exit(1)
+			}
+			s := bufio.NewScanner(f)
+			for s.Scan() {
+				if t := strings.TrimSpace(s.Text()); t != "" {
+					targets = append(targets, utils.ExpandPath(t))
+				}
+			}
+			f.Close()
+		} else {
+			targetArgs := args
+			if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" && len(args) >= 2 {
+				firstExists := false
+				if _, err := os.Stat(utils.ExpandPath(args[0])); err == nil {
+					firstExists = true
+				}
+				lastExists := false
+				if _, err := os.Stat(utils.ExpandPath(args[len(args)-1])); err == nil {
+					lastExists = true
+				}
+				if firstExists && !lastExists {
+					patternFlag = args[len(args)-1]
+					targetArgs = args[:len(args)-1]
+				} else {
+					if len(args) > 1 {
+						targetArgs = args[1:]
+					} else {
+						targetArgs = []string{}
+					}
+				}
+			} else if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" {
+				if len(args) > 1 {
+					targetArgs = args[1:]
+				} else {
+					targetArgs = []string{}
+				}
+			}
+			for _, arg := range targetArgs {
+				targets = append(targets, utils.ExpandPath(arg))
+			}
+		}
+		if len(targets) == 0 {
+			targets = []string{"."}
+		}
+
 		if inputMode != "" {
 			finalCfg.Input.Format = inputMode
-		} else if len(args) > 1 {
-			ext := strings.ToLower(filepath.Ext(args[1]))
+		} else if len(targets) > 0 && targets[0] != "stdin" && targets[0] != "." {
+			ext := strings.ToLower(filepath.Ext(targets[0]))
 			if ext == ".jsonl" || ext == ".json" {
 				finalCfg.Input.Format = "jsonl"
 			} else if ext == ".csv" {
 				finalCfg.Input.Format = "csv"
-			} else {
+			} else if ext == ".txt" || ext == ".log" {
 				finalCfg.Input.Format = "text"
 			}
 		}
@@ -214,61 +268,6 @@ var rootCmd = &cobra.Command{
 			} else {
 				slog.Error("Error loading tool", "path", tf, "error", err)
 			}
-		}
-
-		var targets []string
-		if stdin {
-			targets = []string{"stdin"}
-		} else if listFile != "" {
-			f, err := os.Open(utils.ExpandPath(listFile))
-			if err != nil {
-				slog.Error("Error opening list file", "path", listFile, "error", err)
-				os.Exit(1)
-			}
-			s := bufio.NewScanner(f)
-			for s.Scan() {
-				if t := strings.TrimSpace(s.Text()); t != "" {
-					targets = append(targets, utils.ExpandPath(t))
-				}
-			}
-			f.Close()
-		} else {
-			targetArgs := args
-			if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" && len(args) >= 2 {
-				firstExists := false
-				if _, err := os.Stat(utils.ExpandPath(args[0])); err == nil {
-					firstExists = true
-				}
-				lastExists := false
-				if _, err := os.Stat(utils.ExpandPath(args[len(args)-1])); err == nil {
-					lastExists = true
-				}
-
-				if firstExists && !lastExists {
-					patternFlag = args[len(args)-1]
-					targetArgs = args[:len(args)-1]
-				} else {
-					if len(args) > 1 {
-						targetArgs = args[1:]
-					} else {
-						targetArgs = []string{}
-					}
-				}
-			} else if patternFlag == "" && !allMode && len(tags) == 0 && processFile == "" {
-				if len(args) > 1 {
-					targetArgs = args[1:]
-				} else {
-					targetArgs = []string{}
-				}
-			}
-			
-			for _, arg := range targetArgs {
-				targets = append(targets, utils.ExpandPath(arg))
-			}
-		}
-
-		if len(targets) == 0 {
-			targets = []string{"."}
 		}
 
 		if resumeFile != "" {
@@ -386,6 +385,7 @@ func init() {
 	rootCmd.PersistentFlags().StringVarP(&outputFile, "output", "o", "", "output file path")
 	rootCmd.PersistentFlags().StringVar(&outputJSON, "oJ", "", "save results to JSON file (supports .zst)")
 	rootCmd.PersistentFlags().StringVar(&outputText, "oT", "", "save results to Text file (supports .zst)")
+	rootCmd.PersistentFlags().StringVar(&outputHTML, "oH", "", "generate professional HTML intelligence report")
 	rootCmd.PersistentFlags().StringVarP(&outputTemplate, "template", "t", "", "output template")
 	rootCmd.PersistentFlags().StringVarP(&toolIDs, "workflow", "w", "", "workflow tool IDs")
 	rootCmd.PersistentFlags().StringVar(&resumeFile, "resume", "", "resume scan state")
