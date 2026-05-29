@@ -50,6 +50,7 @@ var (
 	uniqueMode     bool
 	smartMode      bool
 	entropyMode    bool
+	usePcre        bool
 	tags           []string
 	jsonMode       bool
 	reportMode     bool
@@ -332,6 +333,7 @@ var rootCmd = &cobra.Command{
 				Notify: notify, NotifyInterval: notifyInterval,
 				CooldownEvery: cooldownEvery, CooldownTime: cooldownTime,
 				ThermalThreshold: thermalThreshold, MaxRAMThreshold: maxRAMThreshold, AutoScale: autoScale,
+				UsePcre:          usePcre,
 				UseMmap:          useMmap,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
@@ -377,6 +379,7 @@ func init() {
 	rootCmd.PersistentFlags().BoolVarP(&uniqueMode, "unique", "u", false, "deduplicate matches")
 	rootCmd.PersistentFlags().BoolVar(&smartMode, "smart", false, "AI interest filtering")
 	rootCmd.PersistentFlags().BoolVar(&entropyMode, "entropy", false, "high-entropy filtering")
+	rootCmd.PersistentFlags().BoolVar(&usePcre, "pcre", false, "use PCRE-compatible regex engine (regexp2)")
 	rootCmd.PersistentFlags().StringSliceVar(&tags, "tags", nil, "filter by tag")
 	rootCmd.PersistentFlags().BoolVar(&jsonMode, "json", false, "output in JSON")
 	rootCmd.PersistentFlags().BoolVar(&reportMode, "report", false, "generate markdown report")

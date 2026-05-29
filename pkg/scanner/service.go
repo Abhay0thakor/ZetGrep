@@ -1,7 +1,7 @@
 package scanner
 
 import (
-	"bufio"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/csv"
@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -24,8 +25,15 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 	"github.com/Abhay0thakor/ZetGrep/pkg/state"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
+	"github.com/dlclark/regexp2"
 	"github.com/logrusorgru/aurora"
 )
+
+type CompiledPattern struct {
+	p    models.Pattern
+	re   *regexp.Regexp
+	pcre *regexp2.Regexp
+}
 
 type ScannerOptions struct {
 	TargetPaths      []string
@@ -47,6 +55,7 @@ type ScannerOptions struct {
 	ThermalThreshold float64
 	MaxRAMThreshold  float64
 	AutoScale        bool
+	UsePcre          bool
 	UseMmap          bool
 	Webhook          string
 	WebhookType      string
@@ -100,12 +109,7 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 	}
 
 	if cfg.PatternsDir == "" {
-		cfg.PatternsDir, err = GetPatternDir()
-		if err != nil {
-			if _, err := os.Stat("patterns"); err == nil {
-				cfg.PatternsDir = "patterns"
-			}
-		}
+		cfg.PatternsDir, _ = GetPatternDir()
 	}
 	if cfg.ToolsDir == "" {
 		cfg.ToolsDir, _ = GetToolDir()
@@ -116,10 +120,7 @@ func NewScannerService(cfg models.Config) (*ScannerService, error) {
 		maxProc = 50
 	}
 
-	tools, err := LoadToolsFrom(cfg.ToolsDir)
-	if err != nil {
-		slog.Warn("Error loading tools", "error", err)
-	}
+	tools, _ := LoadToolsFrom(cfg.ToolsDir)
 
 	var p Parser
 	switch cfg.Input.Format {
@@ -189,15 +190,11 @@ func (s *ScannerService) resolveTargets(paths []string) []string {
 		}
 		info, err := os.Stat(path)
 		if err != nil {
-			slog.Debug("Error stating path", "path", path, "error", err)
 			continue
 		}
 		if info.IsDir() {
 			filepath.Walk(path, func(p string, i os.FileInfo, e error) error {
-				if e != nil {
-					return nil
-				}
-				if !i.IsDir() {
+				if e == nil && !i.IsDir() {
 					resolved = append(resolved, p)
 				}
 				return nil
@@ -212,9 +209,34 @@ func (s *ScannerService) resolveTargets(paths []string) []string {
 func (s *ScannerService) sendNotification(msg string) {
 	cmd := exec.Command("notify")
 	cmd.Stdin = strings.NewReader(msg)
-	if err := cmd.Run(); err != nil {
-		slog.Debug("Failed to send notification", "error", err)
+	_ = cmd.Run()
+}
+
+func (s *ScannerService) sendWebhook(url, wType string, res *models.Result) {
+	var payload interface{}
+	switch wType {
+	case "slack":
+		payload = map[string]string{"text": fmt.Sprintf("🎯 *ZetGrep Hit*: [%s] %s\n`%s`", res.Pattern, res.File, res.Content)}
+	case "discord":
+		payload = map[string]interface{}{
+			"embeds": []map[string]interface{}{
+				{
+					"title":       "ZetGrep Match Found",
+					"description": res.Content,
+					"fields": []map[string]string{
+						{"name": "Pattern", "value": res.Pattern, "inline": "true"},
+						{"name": "File", "value": fmt.Sprintf("%s:%d", res.File, res.Line), "inline": "true"},
+					},
+					"color": 15844367, // Yellow
+				},
+			},
+		}
+	default:
+		payload = res
 	}
+
+	b, _ := json.Marshal(payload)
+	http.Post(url, "application/json", bytes.NewBuffer(b))
 }
 
 func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, activeTools []models.Tool, hc *HitCounter, resultChan chan<- *models.Result, ctx context.Context) {
@@ -263,12 +285,7 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 	}
 
 	if opts.Webhook != "" {
-		isHighSignal := s.Classifier.Classify(res.Content) == "high-interest" || res.Entropy > 5.0
-		if isHighSignal {
-			msg := fmt.Sprintf("🎯 **ZetGrep Alert**\n**Pattern**: %s\n**File**: %s:%d\n**Content**: `%s`", 
-				res.Pattern, res.File, res.Line, res.Content)
-			go utils.SendWebhook(opts.Webhook, opts.WebhookType, msg)
-		}
+		go s.sendWebhook(opts.Webhook, opts.WebhookType, res)
 	}
 
 	select {
@@ -282,7 +299,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
 	resultChan := make(chan *models.Result, 1000)
 
-	// 1. Thermal Protection
 	if opts.ThermalThreshold > 0 {
 		go utils.MonitorThermal(opts.ThermalThreshold, opts.ThermalThreshold-15.0, func() {
 			atomic.StoreInt32(&s.isPaused, 1)
@@ -297,7 +313,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		})
 	}
 
-	// 2. RAM Pressure & Auto-Scaling
 	if opts.MaxRAMThreshold > 0 || opts.AutoScale {
 		go func() {
 			for {
@@ -328,70 +343,57 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		}()
 	}
 
-	var compiledPatterns []struct {
-		p    models.Pattern
-		comp *regexp.Regexp
-	}
+	var compiledPatterns []CompiledPattern
 	literals := make(map[string]string)
 
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName)
 		if err != nil {
-			slog.Debug("Failed to get pattern", "name", pName, "error", err)
 			continue
 		}
 
 		finalPattern := p.Pattern
 		isCaseInsensitive := strings.Contains(p.Flags, "i")
 
-		if !isCaseInsensitive && IsLiteral(finalPattern) {
+		if !opts.UsePcre && !isCaseInsensitive && IsLiteral(finalPattern) {
 			literals[finalPattern] = pName
 			continue
 		}
 
-		if isCaseInsensitive && !strings.HasPrefix(finalPattern, "(?i)") {
-			finalPattern = "(?i)" + finalPattern
-		}
-
-		if comp, err := regexp.Compile(finalPattern); err == nil {
-			compiledPatterns = append(compiledPatterns, struct {
-				p    models.Pattern
-				comp *regexp.Regexp
-			}{p, comp})
+		if opts.UsePcre {
+			opts := regexp2.None
+			if isCaseInsensitive {
+				opts = regexp2.IgnoreCase
+			}
+			if re, err := regexp2.Compile(finalPattern, opts); err == nil {
+				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, pcre: re})
+			}
+		} else {
+			if isCaseInsensitive && !strings.HasPrefix(finalPattern, "(?i)") {
+				finalPattern = "(?i)" + finalPattern
+			}
+			if re, err := regexp.Compile(finalPattern); err == nil {
+				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, re: re})
+			}
 		}
 	}
 
 	litMatcher := NewLiteralMatcher(literals)
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	
+	recordChan := make(chan ScanRecord, 1000)
+	var wg sync.WaitGroup
 	numWorkers := opts.Concurrency
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU() * 2
 	}
-	if numWorkers > 128 { numWorkers = 128 }
 
-	stealer := utils.NewWorkStealer[ScanRecord](numWorkers, 1000)
-	var wg sync.WaitGroup
 	hitCounter := &HitCounter{}
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go func(workerID int) {
+		go func() {
 			defer wg.Done()
-			localQueue := stealer.GetQueue(workerID)
-
-			for {
-				var rec ScanRecord
-				var ok bool
-
-				select {
-				case rec, ok = <-localQueue:
-				default:
-					rec, ok = stealer.Steal(workerID)
-				}
-
-				if !ok { return }
-
+			for rec := range recordChan {
 				for atomic.LoadInt32(&s.isPaused) == 1 {
 					time.Sleep(5 * time.Second)
 				}
@@ -437,31 +439,42 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 
 				for _, cp := range compiledPatterns {
-					matches := cp.comp.FindAllSubmatch(content, -1)
-					for _, matchGroup := range matches {
-						if len(matchGroup) == 0 || len(matchGroup[0]) == 0 {
-							continue
+					if cp.pcre != nil {
+						if m, err := cp.pcre.FindStringMatch(string(content)); err == nil && m != nil {
+							res := GetResult()
+							res.Pattern = cp.p.Name
+							res.Content = m.String()
+							res.Entropy = utils.ShannonEntropy(res.Content)
+							res.Line = rec.Line
+							res.File = rec.File
+							s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 						}
-						res := GetResult()
-						res.Pattern = cp.p.Name
-						res.Content = string(matchGroup[0])
-						res.Matches = make([]string, len(matchGroup))
-						for idx, mg := range matchGroup {
-							res.Matches[idx] = string(mg)
+					} else if cp.re != nil {
+						matches := cp.re.FindAllSubmatch(content, -1)
+						for _, matchGroup := range matches {
+							if len(matchGroup) == 0 || len(matchGroup[0]) == 0 {
+								continue
+							}
+							res := GetResult()
+							res.Pattern = cp.p.Name
+							res.Content = string(matchGroup[0])
+							res.Matches = make([]string, len(matchGroup))
+							for idx, mg := range matchGroup {
+								res.Matches[idx] = string(mg)
+							}
+							res.Entropy = utils.ShannonEntropy(res.Content)
+							res.Line = rec.Line
+							res.File = rec.File
+							s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 						}
-						res.Entropy = utils.ShannonEntropy(res.Content)
-						res.Line = rec.Line
-						res.File = rec.File
-						s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 					}
 				}
 			}
-		}(i)
+		}()
 	}
 
 	go func() {
 		defer close(resultChan)
-		defer stealer.Close()
 		startTime := time.Now()
 		var innerWg sync.WaitGroup
 		innerWg.Add(1)
@@ -504,120 +517,70 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 
 			var sourceReader io.ReadCloser
-			mmapFile, _ := utils.OpenMmap(path)
-			
-			if mmapFile != nil && opts.UseMmap && s.Config.Input.PreProcess == "" && path != "stdin" && path != "-" {
-				// 1. FAST PATH: MMAP
-				slog.Debug("Using mmap for file", "path", path)
-				li := utils.NewLineIterator(mmapFile.Data)
-				lineNum := 0
-				for {
-					line, ok := li.Next()
-					if !ok { break }
-					lineNum++
-					
-					// Important: Copy the byte slice because AC/Regex might store references
-					content := make([]byte, len(line))
-					copy(content, line)
-					
+			if path == "-" || path == "stdin" {
+				sourceReader = io.NopCloser(os.Stdin)
+			} else {
+				f, err := os.Open(path)
+				if err != nil {
+					continue
+				}
+				sourceReader = f
+			}
+
+			trackedReader := &progressReader{
+				r: sourceReader,
+				onRead: func(n int) {
+					progressMu.Lock()
+					defer progressMu.Unlock()
+					globalBytesRead += int64(n)
+					if globalTotalSize > 0 {
+						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
+						if pct > 100 { pct = 100 }
+						if opts.Notify && pct > lastNotifiedPct {
+							shouldNotify := pct >= 95 || pct%opts.NotifyInterval == 0
+							if shouldNotify && pct != lastNotifiedPct {
+								s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
+								lastNotifiedPct = pct
+							}
+						}
+						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
+							lastCooldownPct = pct
+							duration, _ := time.ParseDuration(opts.CooldownTime)
+							msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
+							slog.Info(msg)
+							if opts.Notify { s.sendNotification(msg) }
+							time.Sleep(duration)
+						}
+					}
+				},
+			}
+
+			var finalReader io.ReadCloser = io.NopCloser(trackedReader)
+			if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
+				cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
+				cmd.Stdin = trackedReader
+				if stdout, err := cmd.StdoutPipe(); err == nil {
+					if err := cmd.Start(); err == nil {
+						finalReader = stdout
+						go cmd.Wait()
+					}
+				}
+			}
+
+			recs, err := s.Parser.GetRecords(ctx, finalReader, path)
+			if err == nil {
+				for rec := range recs {
 					select {
 					case <-ctx.Done():
-						mmapFile.Close()
+						sourceReader.Close()
+						finalReader.Close()
 						return
-					default:
-						stealer.Push(ScanRecord{Content: content, Line: lineNum, File: path})
-					}
-					
-					// Update progress periodically
-					if lineNum % 5000 == 0 {
-						progressMu.Lock()
-						// We can't easily track bytes read in the iterator without more logic, 
-						// but for mmap we can just estimate or use the li.pos.
-						// Actually I'll just use a small hack for now.
-						progressMu.Unlock()
+					case recordChan <- rec:
 					}
 				}
-				mmapFile.Close()
-			} else {
-				// 2. SLOW PATH: BUFFERED/PIPED
-				if mmapFile != nil { mmapFile.Close() }
-
-				if path == "-" || path == "stdin" {
-					sourceReader = io.NopCloser(os.Stdin)
-				} else {
-					f, err := os.Open(path)
-					if err != nil {
-						slog.Error("Error opening file", "path", path, "error", err)
-						continue
-					}
-					sourceReader = f
-				}
-
-				trackedReader := &progressReader{
-					r: sourceReader,
-					onRead: func(n int) {
-						progressMu.Lock()
-						defer progressMu.Unlock()
-						globalBytesRead += int64(n)
-						
-						if globalTotalSize > 0 {
-							pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
-							if pct > 100 { pct = 100 }
-
-							if opts.Notify && pct > lastNotifiedPct {
-								shouldNotify := false
-								if pct < 95 {
-									if pct%opts.NotifyInterval == 0 { shouldNotify = true }
-								} else {
-									shouldNotify = true
-								}
-
-								if shouldNotify && pct != lastNotifiedPct {
-									s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
-									lastNotifiedPct = pct
-								}
-							}
-
-							if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
-								lastCooldownPct = pct
-								duration, _ := time.ParseDuration(opts.CooldownTime)
-								msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
-								slog.Info(msg)
-								if opts.Notify { s.sendNotification(msg) }
-								time.Sleep(duration)
-							}
-						}
-					},
-				}
-
-				var finalReader io.ReadCloser = io.NopCloser(trackedReader)
-				if s.Config.Input.PreProcess != "" && path != "stdin" && path != "-" {
-					cmd := exec.CommandContext(ctx, "sh", "-c", s.Config.Input.PreProcess)
-					cmd.Stdin = trackedReader
-					if stdout, err := cmd.StdoutPipe(); err == nil {
-						if err := cmd.Start(); err == nil {
-							finalReader = stdout
-							go cmd.Wait()
-						}
-					}
-				}
-
-				recs, err := s.Parser.GetRecords(ctx, finalReader, path)
-				if err == nil {
-					for rec := range recs {
-						select {
-						case <-ctx.Done():
-							sourceReader.Close()
-							finalReader.Close()
-							return
-						default:
-							stealer.Push(rec)
-						}
-					}
-				}
-				sourceReader.Close()
-				finalReader.Close()
 			}
+			sourceReader.Close()
+			finalReader.Close()
 			
 			if opts.Incremental && opts.StateDB != nil && err == nil {
 				_ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime())
@@ -627,6 +590,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
 			}
 		}
+		close(recordChan)
 		innerWg.Wait()
 		
 		if opts.Notify {
@@ -642,16 +606,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 }
 
 func (s *ScannerService) getActiveTools(toolIDs []string) []models.Tool {
-	if len(toolIDs) == 0 {
-		return nil
-	}
+	if len(toolIDs) == 0 { return nil }
 	var active []models.Tool
 	for _, id := range toolIDs {
 		id = strings.TrimSpace(id)
 		for _, t := range s.Tools {
-			if t.ID == id {
-				active = append(active, t)
-			}
+			if t.ID == id { active = append(active, t) }
 		}
 	}
 	return active
@@ -662,13 +622,9 @@ func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string,
 	resultChan := make(chan *models.Result, 2000)
 	activeTools := s.getActiveTools(toolIDs)
 	b, err := os.ReadFile(resultsFile)
-	if err != nil {
-		return nil, err
-	}
+	if err != nil { return nil, err }
 	var results []*models.Result
-	if err := json.Unmarshal(b, &results); err != nil {
-		return nil, err
-	}
+	if err := json.Unmarshal(b, &results); err != nil { return nil, err }
 	go func() {
 		defer close(resultChan)
 		for _, res := range results {
@@ -678,8 +634,7 @@ func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string,
 				}
 			}
 			select {
-			case <-ctx.Done():
-				return
+			case <-ctx.Done(): return
 			case resultChan <- res:
 			}
 		}
@@ -689,241 +644,87 @@ func (s *ScannerService) ProcessResults(ctx context.Context, resultsFile string,
 
 func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 	var logs []string
-	logs = append(logs, fmt.Sprintf("%s Testing input line (Format: %s): %s", au.Bold(au.Cyan("[DEBUG]")), s.Config.Input.Format, line))
-
-	if line == "" {
-		logs = append(logs, fmt.Sprintf("%s Line is empty", au.Red("[ERROR]")))
-		return logs
-	}
+	logs = append(logs, fmt.Sprintf("%s Testing line: %s", au.Bold(au.Cyan("[DEBUG]")), line))
+	if line == "" { return logs }
 
 	var contents [][]byte
-	var idVal string = "unknown"
-
 	if s.Config.Input.Format == "csv" {
 		sep := s.Config.Input.CSVConfig.Separator
-		if sep == "" {
-			sep = ","
-		}
+		if sep == "" { sep = "," }
 		reader := csv.NewReader(strings.NewReader(line))
 		reader.Comma = rune(sep[0])
 		record, err := reader.Read()
-		if err != nil {
-			logs = append(logs, fmt.Sprintf("%s CSV Parse failed: %v", au.Red("[ERROR]"), err))
-			return logs
-		}
-		logs = append(logs, fmt.Sprintf("%s CSV parsed successfully (%d columns)", au.Green("[SUCCESS]"), len(record)))
-
-		idIdx := s.Config.Input.CSVConfig.IDIndex
-		if idIdx < len(record) {
-			idVal = record[idIdx]
-		}
-
+		if err != nil { return logs }
 		targetIdxs := s.Config.Input.CSVConfig.TargetIdx
 		if len(targetIdxs) == 0 {
-			for i := range record {
-				targetIdxs = append(targetIdxs, i)
-			}
+			for i := range record { targetIdxs = append(targetIdxs, i) }
 		}
-
 		for _, idx := range targetIdxs {
-			if idx < len(record) {
-				contents = append(contents, []byte(record[idx]))
-			}
+			if idx < len(record) { contents = append(contents, []byte(record[idx])) }
 		}
 	} else {
 		var data map[string]interface{}
 		err := json.Unmarshal([]byte(line), &data)
-		if err != nil {
-			if s.Config.Input.Format != "text" {
-				logs = append(logs, fmt.Sprintf("%s JSON Unmarshal failed: %v. Only '$' target will work.", au.Yellow("[WARN]"), err))
-			}
-		} else {
-			logs = append(logs, fmt.Sprintf("%s JSON parsed successfully", au.Green("[SUCCESS]")))
-		}
-
 		if err == nil {
 			for field, val := range s.Config.Input.Filters {
 				v, ok := getNestedField(data, field)
-				if !ok {
-					logs = append(logs, fmt.Sprintf("%s Field '%s' missing. %s", au.Yellow("[FILTER]"), field, au.Red("SKIP.")))
-					return logs
-				}
-				if v != val {
-					logs = append(logs, fmt.Sprintf("%s Field '%s' value '%s' != '%s'. %s", au.Yellow("[FILTER]"), field, v, val, au.Red("SKIP.")))
-					return logs
-				}
-				logs = append(logs, fmt.Sprintf("%s Field '%s' matches '%s'. %s", au.Yellow("[FILTER]"), field, val, au.Green("PASS.")))
-			}
-		}
-
-		idField := s.Config.Input.ID
-		if err == nil {
-			idVal, _ = getNestedField(data, idField)
-			if idVal == "" {
-				idVal = "unknown"
+				if !ok || v != val { return logs }
 			}
 		}
 
 		var targets []string
-		if s.Config.Input.Target != "" {
-			targets = append(targets, s.Config.Input.Target)
-		}
+		if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
 		targets = append(targets, s.Config.Input.Targets...)
-
-		if len(targets) == 0 || s.Config.Input.Format == "text" {
-			targets = append(targets, "$")
-		}
+		if len(targets) == 0 || s.Config.Input.Format == "text" { targets = append(targets, "$") }
 
 		for _, targetField := range targets {
 			var content string
 			var ok bool
-			if targetField == "$" {
-				content = line
-				ok = true
-				logs = append(logs, fmt.Sprintf("%s Added target '$' (Raw Line)", au.Bold(au.Blue("[TARGET]"))))
-			} else if err == nil {
+			if targetField == "$" { content = line; ok = true } else if err == nil {
 				content, ok = getNestedField(data, targetField)
-				if ok {
-					logs = append(logs, fmt.Sprintf("%s Found field '%s'.", au.Bold(au.Blue("[TARGET]")), targetField))
-				}
 			}
-
 			if ok {
-				if s.Config.Input.Decode {
-					oldLen := len(content)
-					content = unescapeContent(content)
-					logs = append(logs, fmt.Sprintf("%s Unescaped content (Length: %d -> %d)", au.Magenta("[DECODE]"), oldLen, len(content)))
-				}
-
-				if cmdStr, exists := s.Config.Input.PostProcess[targetField]; exists {
-					logs = append(logs, fmt.Sprintf("%s Running PostProcess: %s", au.Yellow("[PRE]"), cmdStr))
-					cmd := exec.CommandContext(context.Background(), "bash", "-c", "echo '"+strings.ReplaceAll(content, "'", "'\\''")+"' | "+cmdStr)
-					if out, err := cmd.Output(); err == nil {
-						content = string(out)
-						logs = append(logs, fmt.Sprintf("%s Transformation complete.", au.Green("[POST]")))
-					}
-				}
+				if s.Config.Input.Decode { content = unescapeContent(content) }
 				contents = append(contents, []byte(content))
 			}
 		}
 	}
 
-	if len(contents) == 0 && s.Config.Input.Format != "csv" {
-		logs = append(logs, fmt.Sprintf("%s No targets matched!", au.Red("[ERROR]")))
-		return logs
-	}
-
 	for _, content := range contents {
-		if len(content) == 0 {
-			continue
-		}
 		for _, pName := range patterns {
-			if pName == "" {
-				continue
-			}
-			p, perr := s.getPattern(pName)
-			if perr != nil {
-				continue
-			}
-			re, rerr := regexp.Compile(p.Pattern)
-			if rerr != nil {
-				logs = append(logs, fmt.Sprintf("%s Pattern '%s' invalid regex: %v", au.Red("[PATTERN]"), pName, rerr))
-				continue
-			}
+			p, _ := s.getPattern(pName)
+			re, _ := regexp.Compile(p.Pattern)
 			if matches := re.FindAllSubmatch(content, -1); len(matches) > 0 {
-				logs = append(logs, fmt.Sprintf("%s Pattern '%s' %s %d times in content: %s", au.Green("[MATCH]"), pName, au.Bold("hit"), len(matches), string(content)))
+				logs = append(logs, fmt.Sprintf("%s Pattern '%s' hit", au.Green("[MATCH]"), pName))
 			}
 		}
 	}
-
 	return logs
 }
 
 func (s *ScannerService) LoadResumeState(file string) error {
 	file = utils.ExpandPath(file)
 	b, err := os.ReadFile(file)
-	if err != nil {
-		return err
-	}
+	if err != nil { return err }
 	return json.Unmarshal(b, &s.Resume)
 }
 
 func (s *ScannerService) SaveResumeState(file string) error {
 	file = utils.ExpandPath(file)
-	b, err := json.MarshalIndent(s.Resume, "", "  ")
-	if err != nil {
-		return err
-	}
+	b, _ := json.MarshalIndent(s.Resume, "", "  ")
 	return os.WriteFile(file, b, 0644)
 }
 
 func (s *ScannerService) FilterPatternsByTag(tags []string) []string {
-	if len(tags) == 0 {
-		return nil
-	}
 	var matched []string
 	pats, _ := GetPatterns(s.Config.PatternsDir)
 	for _, pName := range pats {
 		p, _ := s.getPattern(pName)
 		for _, t := range tags {
 			for _, pt := range p.Tags {
-				if t == pt {
-					matched = append(matched, pName)
-					break
-				}
+				if t == pt { matched = append(matched, pName); break }
 			}
 		}
 	}
 	return matched
-}
-
-func (s *ScannerService) RewriteFile(ctx context.Context, path string) error {
-	path = utils.ExpandPath(path)
-	fmt.Printf("%s %s: This will modify the target file in-place! Continue? [y/N]: ", au.Bold(au.Red("[WARNING]")), path)
-	var confirm string
-	fmt.Scanln(&confirm)
-	if strings.ToLower(confirm) != "y" {
-		return fmt.Errorf("operation cancelled by user")
-	}
-	tempPath := path + ".tmp"
-	f, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	out, err := os.Create(tempPath)
-	if err != nil {
-		return err
-	}
-	defer out.Close()
-	scanner := bufio.NewScanner(f)
-	buf := make([]byte, 64*1024)
-	scanner.Buffer(buf, 20*1024*1024)
-	lineCount := 0
-	for scanner.Scan() {
-		line := scanner.Text()
-		lineCount++
-		var data map[string]interface{}
-		if err := json.Unmarshal([]byte(line), &data); err == nil {
-			for field, cmdStr := range s.Config.Input.PostProcess {
-				if val, ok := getNestedField(data, field); ok {
-					cmd := exec.CommandContext(ctx, "bash", "-c", "echo '"+strings.ReplaceAll(val, "'", "'\\''")+"' | "+cmdStr)
-					if processed, err := cmd.Output(); err == nil {
-						data[field] = strings.TrimSpace(string(processed))
-					}
-				}
-			}
-			newData, _ := json.Marshal(data)
-			out.Write(newData)
-			out.WriteString("\n")
-		} else {
-			out.WriteString(line + "\n")
-		}
-		if lineCount%100 == 0 {
-			fmt.Fprintf(os.Stderr, "\r%s Rewriting %s: %d lines processed", au.Yellow("[*]"), filepath.Base(path), lineCount)
-		}
-	}
-	os.Rename(tempPath, path)
-	fmt.Printf("\n%s Successfully beautified %s\n", au.Green("[+]"), path)
-	return nil
 }
