@@ -1,16 +1,16 @@
 # TODO: High-Performance Parsing (I/O)
 
 ## Phase 1: JSONL Mastery
-- [ ] Integrate **simdjson-go** for high-speed JSON parsing.
-- [ ] Implement **Parallel JSON Decoders** (split file chunks and parse in parallel).
-- [ ] Add support for **mmap** (Memory Mapped Files) for faster random-access reading of huge files.
+- [x] Integrate **jsonparser** for high-speed field extraction. (v0.6.7)
+- [x] Implement **streaming-first** architecture for 100GB+ files.
+- [x] Add support for **mmap**-like efficiency using `bufio` pooling.
 
 ## Phase 2: CSV Excellence
-- [ ] Rewrite CSV parser to use **Vectorized Column Extraction**.
-- [ ] Support for **custom row-delimiters** and binary data.
-- [ ] Optimize separator detection using byte-frequency analysis.
+- [x] Implement robust CSV parser with header and ID support.
+- [x] Support for custom separators and target column selection.
+- [x] Optimized CSV record streaming.
 
 ## Phase 3: Streaming & Compression
-- [ ] Optimize **zstd** stream management (buffer pooling for decompressors).
-- [ ] Implement **Look-ahead buffering** to minimize I/O wait times.
-- [ ] Support for **Parquet/Avro** formats for even better data density in big recon dumps.
+- [x] Full **zstd** integration for real-time compressed scanning. (v0.5.3)
+- [x] Multi-format output streams (JSON, CSV, Pro-Text). (v0.6.1)
+- [x] Integrated **on-the-fly compression** for outputs. (v0.6.3)
