@@ -262,7 +262,6 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 	}
 
 	if opts.Webhook != "" {
-		// Only send high-signal matches to webhooks to avoid spam/rate-limits
 		isHighSignal := s.Classifier.Classify(res.Content) == "high-interest" || res.Entropy > 5.0
 		if isHighSignal {
 			msg := fmt.Sprintf("🎯 **ZetGrep Alert**\n**Pattern**: %s\n**File**: %s:%d\n**Content**: `%s`", 
@@ -363,21 +362,35 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 	litMatcher := NewLiteralMatcher(literals)
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	recordChan := make(chan ScanRecord, 1000)
-	var wg sync.WaitGroup
+	
 	numWorkers := opts.Concurrency
 	if numWorkers <= 0 {
 		numWorkers = runtime.NumCPU() * 2
 	}
+	if numWorkers > 128 { numWorkers = 128 }
 
+	stealer := utils.NewWorkStealer[ScanRecord](numWorkers, 1000)
+	var wg sync.WaitGroup
 	hitCounter := &HitCounter{}
 
 	for i := 0; i < numWorkers; i++ {
 		wg.Add(1)
-		go func() {
+		go func(workerID int) {
 			defer wg.Done()
-			for rec := range recordChan {
-				// System Check (Pause/Throttle)
+			localQueue := stealer.GetQueue(workerID)
+
+			for {
+				var rec ScanRecord
+				var ok bool
+
+				select {
+				case rec, ok = <-localQueue:
+				default:
+					rec, ok = stealer.Steal(workerID)
+				}
+
+				if !ok { return }
+
 				for atomic.LoadInt32(&s.isPaused) == 1 {
 					time.Sleep(5 * time.Second)
 				}
@@ -442,11 +455,12 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					}
 				}
 			}
-		}()
+		}(i)
 	}
 
 	go func() {
 		defer close(resultChan)
+		defer stealer.Close()
 		startTime := time.Now()
 		var innerWg sync.WaitGroup
 		innerWg.Add(1)
@@ -557,7 +571,8 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						sourceReader.Close()
 						finalReader.Close()
 						return
-					case recordChan <- rec:
+					default:
+						stealer.Push(rec)
 					}
 				}
 			}
@@ -572,7 +587,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path))
 			}
 		}
-		close(recordChan)
 		innerWg.Wait()
 		
 		if opts.Notify {
