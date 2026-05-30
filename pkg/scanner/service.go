@@ -27,6 +27,7 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	"github.com/dlclark/regexp2"
 	"github.com/logrusorgru/aurora"
+	"github.com/schollz/progressbar/v3"
 )
 
 type CompiledPattern struct {
@@ -215,7 +216,6 @@ func (s *ScannerService) sendNotification(msg string) {
 }
 
 func (s *ScannerService) sendWebhook(url, wType, level string, res *models.Result) {
-	// Filter by level
 	if level == "high-interest" && s.Classifier.Classify(res.Content) != "high-interest" {
 		return
 	}
@@ -228,39 +228,22 @@ func (s *ScannerService) sendWebhook(url, wType, level string, res *models.Resul
 	case "slack":
 		payload = map[string]interface{}{
 			"blocks": []map[string]interface{}{
-				{
-					"type": "section",
-					"text": map[string]string{
-						"type": "mrkdwn",
-						"text": fmt.Sprintf("🎯 *ZetGrep Hit*: `%s`", res.Pattern),
-					},
-				},
-				{
-					"type": "section",
-					"fields": []map[string]string{
-						{"type": "mrkdwn", "text": fmt.Sprintf("*File:*\n%s", res.File)},
-						{"type": "mrkdwn", "text": fmt.Sprintf("*Line:*\n%d", res.Line)},
-						{"type": "mrkdwn", "text": fmt.Sprintf("*Entropy:*\n%.2f", res.Entropy)},
-					},
-				},
-				{
-					"type": "section",
-					"text": map[string]string{
-						"type": "mrkdwn",
-						"text": fmt.Sprintf("*Content:*\n```%s```", res.Content),
-					},
-				},
+				{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": fmt.Sprintf("🎯 *ZetGrep Hit*: `%s`", res.Pattern)}},
+				{"type": "section", "fields": []map[string]string{
+					{"type": "mrkdwn", "text": fmt.Sprintf("*File:*\n%s", res.File)},
+					{"type": "mrkdwn", "text": fmt.Sprintf("*Line:*\n%d", res.Line)},
+					{"type": "mrkdwn", "text": fmt.Sprintf("*Entropy:*\n%.2f", res.Entropy)},
+				}},
+				{"type": "section", "text": map[string]string{"type": "mrkdwn", "text": fmt.Sprintf("*Content:*\n```%s```", res.Content)}},
 			},
 		}
 	case "discord":
-		color := 15844367 // Yellow
-		if res.Entropy > 4.5 {
-			color = 15548997 // Red
-		}
+		color := 15844367
+		if res.Entropy > 4.5 { color = 15548997 }
 		payload = map[string]interface{}{
 			"embeds": []map[string]interface{}{
 				{
-					"title":       "ZetGrep Match Found",
+					"title": "ZetGrep Match Found",
 					"description": fmt.Sprintf("```%s```", res.Content),
 					"fields": []map[string]interface{}{
 						{"name": "Pattern", "value": res.Pattern, "inline": true},
@@ -287,7 +270,6 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 			return
 		}
 	}
-
 	if opts.GlobalDedupe && opts.StateDB != nil {
 		h := sha256.New()
 		h.Write([]byte(res.Pattern + ":" + res.Content))
@@ -298,7 +280,6 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 		}
 		_ = opts.StateDB.MarkHit(hash)
 	}
-
 	if opts.SmartMode && s.Classifier.Classify(res.Content) != "high-interest" {
 		PutResult(res)
 		return
@@ -307,30 +288,20 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 		PutResult(res)
 		return
 	}
-
 	for _, t := range activeTools {
 		if val, _ := s.executeToolWithLimit(t, *res); val != "" {
 			res.ToolData = append(res.ToolData, models.ToolOutput{ToolID: t.ID, Label: t.Field, Value: val})
 		}
 	}
-
 	if hc != nil {
 		hc.Lock()
 		hc.count++
 		hc.Unlock()
 	}
-
-	if opts.ResultHook != nil {
-		opts.ResultHook(res)
-	}
-
-	if opts.Webhook != "" {
-		go s.sendWebhook(opts.Webhook, opts.WebhookType, opts.WebhookLevel, res)
-	}
-
+	if opts.ResultHook != nil { opts.ResultHook(res) }
+	if opts.Webhook != "" { go s.sendWebhook(opts.Webhook, opts.WebhookType, opts.WebhookLevel, res) }
 	select {
-	case <-ctx.Done():
-		return
+	case <-ctx.Done(): return
 	case resultChan <- res:
 	}
 }
@@ -371,12 +342,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 							slog.Info("🟢 Memory pressure relieved. Resuming scan.")
 						}
 					}
-
-					if opts.AutoScale && stats.CPUUsage > 90.0 {
-						atomic.StoreInt32(&s.isThrottled, 1)
-					} else {
-						atomic.StoreInt32(&s.isThrottled, 0)
-					}
+					if opts.AutoScale && stats.CPUUsage > 90.0 { atomic.StoreInt32(&s.isThrottled, 1) } else { atomic.StoreInt32(&s.isThrottled, 0) }
 				}
 				time.Sleep(10 * time.Second)
 			}
@@ -386,20 +352,16 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	var compiledPatterns []CompiledPattern
 	var activePatterns []models.Pattern
 	literals := make(map[string]string)
-
 	for _, pName := range opts.Patterns {
 		p, err := s.getPattern(pName)
 		if err != nil { continue }
 		activePatterns = append(activePatterns, p)
-
 		finalPattern := p.Pattern
 		isCaseInsensitive := strings.Contains(p.Flags, "i")
-
 		if !opts.UsePcre && !isCaseInsensitive && IsLiteral(finalPattern) {
 			literals[finalPattern] = pName
 			continue
 		}
-
 		if opts.UsePcre {
 			regOpts := regexp2.None
 			if isCaseInsensitive { regOpts = regexp2.IgnoreCase }
@@ -407,9 +369,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, pcre: re})
 			}
 		} else {
-			if isCaseInsensitive && !strings.HasPrefix(finalPattern, "(?i)") {
-				finalPattern = "(?i)" + finalPattern
-			}
+			if isCaseInsensitive && !strings.HasPrefix(finalPattern, "(?i)") { finalPattern = "(?i)" + finalPattern }
 			if re, err := regexp.Compile(finalPattern); err == nil {
 				compiledPatterns = append(compiledPatterns, CompiledPattern{p: p, re: re})
 			}
@@ -419,13 +379,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	litMatcher := NewLiteralMatcher(literals)
 	var preFilter *PreFilter
 	if opts.UseBloom { preFilter = NewPreFilter(activePatterns) }
-
 	activeTools := s.getActiveTools(opts.ToolIDs)
 	recordChan := make(chan ScanRecord, 1000)
 	var wg sync.WaitGroup
 	numWorkers := opts.Concurrency
 	if numWorkers <= 0 { numWorkers = runtime.NumCPU() * 2 }
-
 	hitCounter := &HitCounter{}
 
 	for i := 0; i < numWorkers; i++ {
@@ -435,19 +393,25 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			for rec := range recordChan {
 				for atomic.LoadInt32(&s.isPaused) == 1 { time.Sleep(5 * time.Second) }
 				if atomic.LoadInt32(&s.isThrottled) == 1 { time.Sleep(100 * time.Millisecond) }
-
 				content := rec.Content
 				if preFilter != nil && !preFilter.MayMatch(content) {
 					PutBuffer(content)
 					continue
 				}
-
 				if s.Config.Input.Decode {
 					decoded := []byte(unescapeContent(string(content)))
 					PutBuffer(content)
 					content = decoded
 				}
-
+				postCmd := ""
+				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok { postCmd = cmd } else if cmd, ok := s.Config.Input.PostProcess["$"]; ok { postCmd = cmd }
+				if postCmd != "" {
+					var cmd *exec.Cmd
+					if runtime.GOOS == "windows" { cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+string(content)+" | "+postCmd) } else {
+						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(string(content), "'", "'\\''")+"' | "+postCmd)
+					}
+					if out, err := cmd.Output(); err == nil { content = []byte(strings.TrimSpace(string(out))) }
+				}
 				if litMatcher != nil {
 					matches := litMatcher.Match(string(content))
 					for _, m := range matches {
@@ -460,7 +424,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						s.handleMatch(res, opts, activeTools, hitCounter, resultChan, ctx)
 					}
 				}
-
 				for _, cp := range compiledPatterns {
 					if cp.pcre != nil {
 						if m, err := cp.pcre.FindStringMatch(string(content)); err == nil && m != nil {
@@ -511,11 +474,32 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		var lastCooldownPct int = 0
 		var progressMu sync.Mutex
 
+		var bar *progressbar.ProgressBar
+		if !opts.Silent && globalTotalSize > 0 {
+			bar = progressbar.NewOptions64(globalTotalSize,
+				progressbar.OptionSetDescription("Scanning"),
+				progressbar.OptionSetWriter(os.Stderr),
+				progressbar.OptionShowBytes(true),
+				progressbar.OptionSetWidth(15),
+				progressbar.OptionThrottle(65*time.Millisecond),
+				progressbar.OptionShowCount(),
+				progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
+				progressbar.OptionSpinnerType(14),
+				progressbar.OptionFullWidth(),
+				progressbar.OptionSetPredictTime(true),
+				progressbar.OptionSetTheme(progressbar.Theme{
+					Saucer: "[green]=[reset]", SaucerHead: "[green]>[reset]", SaucerPadding: " ",
+					BarStart: "[", BarEnd: "]",
+				}),
+			)
+		}
+
 		for i, path := range targets {
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex {
 				if info, err := os.Stat(path); err == nil {
 					progressMu.Lock()
 					globalBytesRead += info.Size()
+					if bar != nil { bar.Add64(info.Size()) }
 					progressMu.Unlock()
 				}
 				continue
@@ -526,6 +510,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				if !opts.StateDB.ShouldScan(path, info.Size(), info.ModTime()) {
 					progressMu.Lock()
 					globalBytesRead += info.Size()
+					if bar != nil { bar.Add64(info.Size()) }
 					progressMu.Unlock()
 					continue
 				}
@@ -544,14 +529,20 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					progressMu.Lock()
 					defer progressMu.Unlock()
 					globalBytesRead += int64(n)
+					if bar != nil {
+						bar.Add(n)
+						pctFloat := (float64(globalBytesRead) / float64(globalTotalSize)) * 100
+						bar.Describe(fmt.Sprintf("Scanning [%.1f%%]", pctFloat))
+					}
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
 						if opts.Notify && pct > lastNotifiedPct {
-							shouldNotify := pct >= 95 || pct%opts.NotifyInterval == 0
-							if shouldNotify && pct != lastNotifiedPct {
-								s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
-								lastNotifiedPct = pct
+							if pct >= 95 || pct%opts.NotifyInterval == 0 {
+								if pct != lastNotifiedPct {
+									s.sendNotification(fmt.Sprintf("ZetGrep Progress: %d%% | Target: %s", pct, filepath.Base(path)))
+									lastNotifiedPct = pct
+								}
 							}
 						}
 						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
@@ -592,19 +583,14 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 			sourceReader.Close()
 			finalReader.Close()
-			
 			if opts.Incremental && opts.StateDB != nil && err == nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
-			if !opts.Silent && globalTotalSize > 0 { fmt.Fprintf(os.Stderr, "\r%s Scanned %s: 100%%          \n", au.Green("[+]"), filepath.Base(path)) }
 		}
 		close(recordChan)
 		innerWg.Wait()
-		
 		if opts.Notify {
-			duration := time.Since(startTime).Round(time.Second)
-			hitCounter.Lock()
-			finalHits := hitCounter.count
-			hitCounter.Unlock()
-			s.sendNotification(fmt.Sprintf("ZetGrep Completed! ✅\nDuration: %s\nHits: %d\nTargets: %d", duration, finalHits, len(targets)))
+			finalHits := 0
+			if hitCounter != nil { finalHits = hitCounter.count }
+			s.sendNotification(fmt.Sprintf("ZetGrep Completed! ✅\nDuration: %s\nHits: %d\nTargets: %d", time.Since(startTime).Round(time.Second), finalHits, len(targets)))
 		}
 	}()
 
@@ -652,7 +638,6 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 	var logs []string
 	logs = append(logs, fmt.Sprintf("%s Testing line: %s", au.Bold(au.Cyan("[DEBUG]")), line))
 	if line == "" { return logs }
-
 	var contents [][]byte
 	if s.Config.Input.Format == "csv" {
 		sep := s.Config.Input.CSVConfig.Separator
@@ -677,12 +662,10 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 				if !ok || v != val { return logs }
 			}
 		}
-
 		var targets []string
 		if s.Config.Input.Target != "" { targets = append(targets, s.Config.Input.Target) }
 		targets = append(targets, s.Config.Input.Targets...)
 		if len(targets) == 0 || s.Config.Input.Format == "text" { targets = append(targets, "$") }
-
 		for _, targetField := range targets {
 			var content string
 			var ok bool
@@ -695,7 +678,6 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 			}
 		}
 	}
-
 	for _, content := range contents {
 		for _, pName := range patterns {
 			p, _ := s.getPattern(pName)
