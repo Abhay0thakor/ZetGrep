@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"log/slog"
 	"os"
 
@@ -27,10 +26,8 @@ var webCmd = &cobra.Command{
 			slog.Error("Service initialization error", "error", err)
 			os.Exit(1)
 		}
-		port := 8080
-		if webAddr != "" {
-			fmt.Sscanf(webAddr, ":%d", &port)
-		}
+		port := webPort
+		slog.Info("Starting Web Dashboard", "port", port)
 		srv := api.NewServer(port)
 		if err := srv.Start(); err != nil {
 			slog.Error("Web Dashboard Error", "error", err)
@@ -41,5 +38,6 @@ var webCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(webCmd)
-	webCmd.Flags().StringVarP(&webAddr, "listen", "l", ":8080", "address to listen on")
+	webCmd.Flags().StringVar(&webAddr, "listen", ":8080", "address to listen on")
+	webCmd.Flags().IntVarP(&webPort, "port", "P", 8080, "port to listen on (shorthand for address)")
 }
