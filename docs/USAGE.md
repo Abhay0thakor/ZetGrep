@@ -9,6 +9,7 @@ Available for all subcommands:
 - `-v, --verbose`: Enable debug/trace logging.
 - `--silent`: Absolute silence on terminal (ideal for piping).
 - `--no-color`: Plain ASCII output with simplified symbols.
+- `--quiet, -q`: Quiet mode (show progress bar but hide individual hits on terminal).
 - `--config-file`: Path to global configuration(s).
 
 ## Core Subcommands
@@ -31,6 +32,7 @@ zetgrep scan [pattern] [targets...] [flags]
 - `--incremental`: Only scan files changed since the last run.
 - `--global-dedupe`: Skip findings already seen in previous scans (via bbolt).
 - `--resume`: Pick up a large scan from a specific file/line.
+    - **How it works**: When you use `--resume state.json`, ZetGrep automatically saves its progress every 10,000 records. If you stop the scan (Ctrl+C), you can run the exact same command again with the same `--resume state.json` to continue from the last saved point.
 
 **Hardware Safety:**
 - `--auto-scale`: Throttles workers based on system CPU load.

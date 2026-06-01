@@ -587,7 +587,14 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 			recs, err := s.Parser.GetRecords(ctx, finalReader, path)
 			if err == nil {
+				recordCount := 0
 				for rec := range recs {
+					recordCount++
+					if opts.ResumeFile != "" && recordCount % 10000 == 0 {
+						s.Resume.FileIndex = i
+						s.Resume.LineIndex = rec.Line
+						s.SaveResumeState(opts.ResumeFile)
+					}
 					select {
 					case <-ctx.Done():
 						sourceReader.Close()
@@ -599,6 +606,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			}
 			sourceReader.Close()
 			finalReader.Close()
+			if opts.ResumeFile != "" {
+				s.Resume.FileIndex = i + 1
+				s.Resume.LineIndex = 0
+				s.SaveResumeState(opts.ResumeFile)
+			}
 			if opts.Incremental && opts.StateDB != nil && err == nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
 		}
 		close(recordChan)
