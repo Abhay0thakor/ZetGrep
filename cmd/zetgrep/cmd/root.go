@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.8.4"
+	version = "v0.8.5"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
