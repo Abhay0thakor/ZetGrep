@@ -517,6 +517,16 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					if err == nil {
 						recs, _ := s.Parser.GetRecordsParallel(ctx, m, path, numWorkers)
 						for rec := range recs {
+							// Update progress bar for mmap path
+							if bar != nil {
+								// In parallel mode, 'Line' currently holds the byte offset
+								// But we need the increment. This is tricky.
+								// Better: track processed records and estimate or use a shared counter.
+								// Actually, let's just update the bar periodically based on records
+								// or let the parser handle it.
+								// For now, let's just Add the size of the content
+								bar.Add(len(rec.Content))
+							}
 							select {
 							case <-ctx.Done():
 								m.Unmap(); f.Close(); return

@@ -14,6 +14,7 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/report"
 	"github.com/Abhay0thakor/ZetGrep/pkg/scanner"
 	"github.com/klauspost/compress/zstd"
+	"github.com/mattn/go-isatty"
 	"github.com/olekukonko/tablewriter"
 )
 
@@ -66,14 +67,8 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		uiOut = io.Discard
 	}
 
-	// Detection for Terminal
-	isTerminal := true
-	if stat, _ := os.Stdout.Stat(); (stat.Mode() & os.ModeCharDevice) == 0 {
-		isTerminal = false
-	}
-	
-	// If quiet, suppress stdout data ONLY IF it's going to terminal
-	if quiet && isTerminal {
+	// If quiet, suppress stdout data ONLY IF it's going directly to terminal
+	if quiet && isatty.IsTerminal(os.Stdout.Fd()) {
 		dataOut = io.Discard
 	}
 
