@@ -4,10 +4,11 @@ import (
 	"bufio"
 	"context"
 	"encoding/csv"
-	"encoding/json"
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
+	"sync"
 
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 )
@@ -23,6 +24,7 @@ type ScanRecord struct {
 // Parser defines the interface for different input formats
 type Parser interface {
 	GetRecords(ctx context.Context, reader io.Reader, path string) (<-chan ScanRecord, error)
+	GetRecordsParallel(ctx context.Context, data []byte, path string, concurrency int) (<-chan ScanRecord, error)
 }
 
 // TextParser handles raw text files
@@ -35,7 +37,6 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 	go func() {
 		defer close(out)
 		scanner := bufio.NewScanner(reader)
-		// Set a larger buffer for very long lines
 		buf := make([]byte, 1024*1024)
 		scanner.Buffer(buf, 100*1024*1024)
 		
@@ -43,8 +44,6 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 		for scanner.Scan() {
 			lineNum++
 			line := scanner.Bytes()
-			
-			// Use pooled buffer for content
 			content := GetBuffer()
 			if cap(content) < len(line) {
 				content = make([]byte, len(line))
@@ -67,100 +66,76 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 	return out, nil
 }
 
-// JSONLParser handles JSONL (one JSON object per line)
-type JSONLParser struct {
-	Config models.InputConfig
-}
+func (p *TextParser) GetRecordsParallel(ctx context.Context, data []byte, path string, concurrency int) (<-chan ScanRecord, error) {
+	out := make(chan ScanRecord, 500)
+	if concurrency <= 0 {
+		concurrency = runtime.NumCPU()
+	}
 
-func (p *JSONLParser) GetRecords(ctx context.Context, reader io.Reader, path string) (<-chan ScanRecord, error) {
-	out := make(chan ScanRecord, 100)
-	go func() {
-		defer close(out)
-		scanner := bufio.NewScanner(reader)
-		buf := make([]byte, 1024*1024)
-		scanner.Buffer(buf, 100*1024*1024)
-		
-		lineNum := 0
-		targets := append([]string{}, p.Config.Targets...)
-		if p.Config.Target != "" {
-			targets = append(targets, p.Config.Target)
-		}
-		if len(targets) == 0 {
-			targets = []string{"$"} // Default to whole line if no targets
-		}
+	var wg sync.WaitGroup
+	chunkSize := int64(len(data)) / int64(concurrency)
 
-		// Pre-split target paths
-		splitTargets := make([][]string, len(targets))
-		for i, t := range targets {
-			if t != "$" {
-				splitTargets[i] = strings.Split(t, ".")
-			}
-		}
-		
-		splitID := strings.Split(p.Config.ID, ".")
-		if p.Config.ID == "" {
-			splitID = nil
-		}
-
-		// Pre-split filter paths
-		filterParts := make(map[string][]string)
-		for field := range p.Config.Filters {
-			filterParts[field] = strings.Split(field, ".")
-		}
-
-		for scanner.Scan() {
-			lineNum++
-			line := scanner.Text()
-			var data map[string]interface{}
-			if err := json.Unmarshal([]byte(line), &data); err != nil {
-				for _, t := range targets {
-					if t == "$" {
-						select {
-						case <-ctx.Done(): return
-						case out <- ScanRecord{Content: []byte(line), Line: lineNum, File: path}:
-						}
-					}
-				}
-				continue
+	for i := 0; i < concurrency; i++ {
+		wg.Add(1)
+		go func(id int) {
+			defer wg.Done()
+			start := int64(id) * chunkSize
+			end := int64(id+1) * chunkSize
+			if id == concurrency-1 {
+				end = int64(len(data))
 			}
 
-			// Check filters
-			matchFilters := true
-			for field, val := range p.Config.Filters {
-				if v, ok := getNestedFieldSplit(data, filterParts[field]); !ok || v != val {
-					matchFilters = false
-					break
+			if start > 0 {
+				for start < int64(len(data)) && data[start-1] != '\n' {
+					start++
 				}
 			}
-			if !matchFilters {
-				continue
+
+			if end < int64(len(data)) {
+				for end < int64(len(data)) && data[end-1] != '\n' {
+					end++
+				}
 			}
 
-			idVal, _ := getNestedFieldSplit(data, splitID)
+			if start >= end {
+				return
+			}
 
-			for i, targetField := range targets {
-				var content string
-				var ok bool
-				if targetField == "$" {
-					content = line
-					ok = true
-				} else {
-					content, ok = getNestedFieldSplit(data, splitTargets[i])
+			curr := start
+			for curr < end {
+				lineEnd := curr
+				for lineEnd < end && data[lineEnd] != '\n' {
+					lineEnd++
 				}
 				
-				if ok && content != "" {
-					displayFile := path
-					if idVal != "" {
-						displayFile = fmt.Sprintf("%s:%s", path, idVal)
-					}
-					select {
-					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: []byte(content), Line: lineNum, File: displayFile, ID: idVal}:
-					}
+				line := data[curr:lineEnd]
+				content := GetBuffer()
+				if cap(content) < len(line) {
+					content = make([]byte, len(line))
 				}
+				content = content[:len(line)]
+				copy(content, line)
+
+				select {
+				case <-ctx.Done():
+					PutBuffer(content)
+					return
+				case out <- ScanRecord{
+					Content: content,
+					Line:    int(curr),
+					File:    path,
+				}:
+				}
+				curr = lineEnd + 1
 			}
-		}
+		}(i)
+	}
+
+	go func() {
+		wg.Wait()
+		close(out)
 	}()
+
 	return out, nil
 }
 
@@ -180,29 +155,28 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 		defer close(out)
 		csvReader := csv.NewReader(reader)
 		csvReader.Comma = rune(separator[0])
-		csvReader.LazyQuotes = true
+		csvReader.ReuseRecord = true
 		
-		if p.Config.CSVConfig.HasHeader {
-			_, _ = csvReader.Read()
-		}
+		idIdx := p.Config.CSVConfig.IDIndex
+		targetIdxs := p.Config.CSVConfig.TargetIdx
 
 		lineNum := 0
 		for {
 			record, err := csvReader.Read()
-			if err == io.EOF {
+			if err != nil {
 				break
 			}
-			if err != nil {
+			lineNum++
+
+			if lineNum == 1 && p.Config.CSVConfig.HasHeader {
 				continue
 			}
-			lineNum++
-			
+
 			idVal := ""
-			if p.Config.CSVConfig.IDIndex < len(record) {
-				idVal = record[p.Config.CSVConfig.IDIndex]
+			if idIdx < len(record) {
+				idVal = record[idIdx]
 			}
 
-			targetIdxs := p.Config.CSVConfig.TargetIdx
 			if len(targetIdxs) == 0 {
 				for i := range record {
 					targetIdxs = append(targetIdxs, i)
@@ -227,7 +201,10 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 	return out, nil
 }
 
-// getNestedFieldSplit uses pre-split parts for speed
+func (p *CSVParser) GetRecordsParallel(ctx context.Context, data []byte, path string, concurrency int) (<-chan ScanRecord, error) {
+	return p.GetRecords(ctx, strings.NewReader(string(data)), path)
+}
+
 func getNestedFieldSplit(data map[string]interface{}, parts []string) (string, bool) {
 	if len(parts) == 0 { return "", false }
 	var current interface{} = data
@@ -255,4 +232,3 @@ func getNestedField(data map[string]interface{}, path string) (string, bool) {
 	if path == "" { return "", false }
 	return getNestedFieldSplit(data, strings.Split(path, "."))
 }
-

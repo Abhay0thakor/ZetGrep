@@ -26,6 +26,7 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/state"
 	"github.com/Abhay0thakor/ZetGrep/pkg/utils"
 	"github.com/dlclark/regexp2"
+	"github.com/edsrzf/mmap-go"
 	"github.com/logrusorgru/aurora"
 	"github.com/schollz/progressbar/v3"
 )
@@ -403,15 +404,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					PutBuffer(content)
 					content = decoded
 				}
-				postCmd := ""
-				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok { postCmd = cmd } else if cmd, ok := s.Config.Input.PostProcess["$"]; ok { postCmd = cmd }
-				if postCmd != "" {
-					var cmd *exec.Cmd
-					if runtime.GOOS == "windows" { cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+string(content)+" | "+postCmd) } else {
-						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(string(content), "'", "'\\''")+"' | "+postCmd)
-					}
-					if out, err := cmd.Output(); err == nil { content = []byte(strings.TrimSpace(string(out))) }
-				}
 				if litMatcher != nil {
 					matches := litMatcher.Match(string(content))
 					for _, m := range matches {
@@ -513,6 +505,29 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					if bar != nil { bar.Add64(info.Size()) }
 					progressMu.Unlock()
 					continue
+				}
+			}
+
+			// Try Mmap Parallel Path if enabled
+			if opts.UseMmap && s.Config.Input.PreProcess == "" && path != "stdin" && path != "-" {
+				f, err := os.Open(path)
+				if err == nil {
+					m, err := mmap.Map(f, mmap.RDONLY, 0)
+					if err == nil {
+						recs, _ := s.Parser.GetRecordsParallel(ctx, m, path, numWorkers)
+						for rec := range recs {
+							select {
+							case <-ctx.Done():
+								m.Unmap(); f.Close(); return
+							case recordChan <- rec:
+							}
+						}
+						m.Unmap(); f.Close()
+						if !opts.Silent { progressMu.Lock(); if bar != nil { bar.Describe(fmt.Sprintf("Scanned %s", filepath.Base(path))) }; progressMu.Unlock() }
+						if opts.Incremental && opts.StateDB != nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
+						continue
+					}
+					f.Close()
 				}
 			}
 
