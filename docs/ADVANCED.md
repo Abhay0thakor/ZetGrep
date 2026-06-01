@@ -1,57 +1,58 @@
-# Advanced Configuration & Max Power
+# Advanced Architecture & Max Power
 
-This guide covers features designed for processing massive datasets (40GB+) and custom orchestration.
+This guide covers features designed for ultra-rapid data processing (1TB+) and custom hardware orchestration.
 
-## 📦 Multi-Config Merging
-`zetgrep` allows you to chain multiple configuration files. This is useful for maintaining a "Base" config and adding "Project" specific overrides.
+## 🚀 The Parallel Mmap Engine
+For files larger than 10GB, standard `bufio` readers become the bottleneck. ZetGrep uses a parallel memory-mapped engine.
 
+### How it works:
+1.  **Virtual Mapping**: The OS maps the entire file into memory.
+2.  **Chunked Workers**: ZetGrep divides the file into $N$ chunks (where $N = $ cores).
+3.  **Newline Alignment**: Each worker automatically finds the next newline to ensure records are processed atomically.
+4.  **Zero-Copy**: Data is processed in-place without memory allocation.
+
+**Tip**: Enabled by default. Toggle with `--mmap=false` for legacy behavior.
+
+## 🛡️ Hardware-Aware Scanning
+Protect your system during intense, multi-hour scans.
+
+### 1. Thermal Watchdog
+Automatically pauses the scan if your CPU gets too hot.
 ```bash
-zetgrep -config-file base.yaml -config-file overrides.yaml ip target.txt
+zetgrep scan ... --thermal-threshold 85
 ```
-*   **Strings**: Last occurrence wins.
-*   **Arrays**: Merged (e.g., `ignore_extensions` from both files will be active).
+*   **Pause**: Triggered at 85°C.
+*   **Resume**: Triggered once temperature drops to 70°C.
 
-## 🚀 JSONL Streaming Engine
-When scanning multi-gigabyte JSONL files, standard grep is inefficient. `zetgrep` uses a dedicated streaming engine.
-
-### 1. Define Input Config (`input.yaml`)
-```yaml
-format: jsonl
-target: body    # Field to scan regex against
-id: url         # Field to use as the source identifier
-decode: true    # Unescape characters in the target field
-```
-
-### 2. Run at Scale
+### 2. RAM Pressure Protection
+Prevents Out-Of-Memory (OOM) kills on huge JSON objects.
 ```bash
-zetgrep -input-config input.yaml -all massive_dump.jsonl
+zetgrep scan ... --max-ram 90
+```
+*   Pauses scan if system RAM usage exceeds 90%.
+
+### 3. Concurrency Auto-Scaling
+Dynamically adjusts the number of active workers based on current CPU load.
+```bash
+zetgrep scan ... --auto-scale
 ```
 
-## 💎 Output Templating (`-o`)
-Control the exact string printed to the console.
+## 💎 Dynamic Pattern Optimization
+ZetGrep chooses the fastest algorithm based on your pattern type.
 
-| Placeholder | Description |
+| Algorithm | Used For |
 | :--- | :--- |
-| `{{pattern}}` | Matched pattern name |
-| `{{file}}` | Filename or JSONL ID |
-| `{{line}}` | Line number |
-| `{{match}}` | The full regex match |
-| `{{match[1]}}`| First capture group |
-| `{{tool:ID}}` | Output from an active tool |
+| **Aho-Corasick** | Multi-pattern literal searching. |
+| **Bloom Filter** | Rapid skipping of non-matching records. |
+| **PCRE2** | Complex regex (activated via `--pcre`). |
+| **RE2** | Standard regex (default). |
 
-### Pro Example:
-```bash
-zetgrep -w b64_decode -o "MATCH [{{pattern}}] in {{file}} -> DECODED: {{tool:b64_decode}}" base64 data.txt
-```
+## 🔄 The "Delta" Workflow
+Optimized for continuous monitoring.
 
-## 🔄 The "Process" Workflow
-Optimized for very large scans where you don't want to re-read the source file.
+1.  **Baseline**: `zetgrep scan targets/ --oJ baseline.json`
+2.  **Update**: `zetgrep scan targets/ --oJ update.json`
+3.  **Extract**: `zetgrep delta baseline.json update.json`
 
-1.  **Fast Scan**: Save matches to JSON.
-    ```bash
-    zetgrep -json -all 40gb_dump.jsonl > matches.json
-    ```
-2.  **Enrich**: Run tools on the matches later.
-    ```bash
-    zetgrep -process matches.json -w ip_info -o "{{file}} | {{tool:ip_info}}"
-    ```
+---
+ZetGrep is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.

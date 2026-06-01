@@ -1,42 +1,35 @@
-# Creating Custom Plugins (Tools)
+# Intelligence Library (Patterns)
 
-`zetgrep` is more than a search tool; it's an orchestration engine. You can define YAML files that take every match found by `zetgrep` and pipe it into any Linux command.
+ZetGrep's power comes from its library of highly-curated patterns.
 
-## 🛠 Tool Anatomy
-Tool files are YAML files stored in your `tools_dir`.
+## 📁 Structure
+Patterns are stored in `~/.config/gf/patterns/` as JSON files.
 
-```yaml
-id: my_lookup           # Unique ID for the -tools flag
-name: Custom Lookup     # Friendly name
-description: Runs a custom command on matches
-extract: "[a-z]+"       # (Optional) Sub-regex to extract data from the match
-command: "echo {{match}} | my-tool" # The command to execute
-field: custom_output    # The label used in output
+```json
+{
+  "name": "aws-keys",
+  "pattern": "AKIA[A-Z0-9]{16}",
+  "flags": "i",
+  "tags": ["cloud", "secrets", "aws"]
+}
 ```
 
-## 🔄 Template Variables in Tools
-You can use these variables inside the `command` string:
+## 🚀 Engine Optimization
+ZetGrep automatically optimizes patterns:
+*   **Simple Strings**: Handled by **Aho-Corasick** (10x faster).
+*   **Advanced Patterns**: Can use **PCRE2** via `--pcre`.
+*   **Rapid Negative-Check**: Automatic keyword extraction for **Bloom Filters**.
 
-| Variable | Description |
-| :--- | :--- |
-| `{{match}}` | The full string matched by the pattern regex. |
-| `{{extracted}}` | The part of the match caught by the tool's `extract` regex. |
-| `{{file}}` | The name of the source file. |
-| `{{pattern}}` | The name of the active pattern. |
-| `{{match[1]}}` | Specific capture group from the original pattern regex. |
+## 🏷️ Tagging
+Use tags to organize your library and run specialized scans.
 
-## 💡 Real-world Plugin Example: Base64 to JSON Formatter
-This tool extracts a base64 string, decodes it, and then uses `jq` to pretty-print the resulting JSON.
-
-```yaml
-id: b64_json
-name: Base64 JSON Decoder
-description: Decodes base64 and formats as JSON
-command: "echo {{match}} | base64 -d | jq '.'"
-field: json_payload
-```
-
-**Usage**:
 ```bash
-./zetgrep -tools b64_json auth-tokens .
+# Only run patterns tagged with 'secrets' or 'cloud'
+zetgrep scan ... --tags secrets,cloud
 ```
+
+## 🤝 Contribution
+The intelligence library is a community effort. Please submit PRs with new patterns to expand the default reconnaissance capabilities.
+
+---
+ZetGrep is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.

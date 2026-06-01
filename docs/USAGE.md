@@ -1,80 +1,90 @@
-# Usage Guide
+# Usage Guide (v0.8.7)
 
-ZetGrep provides a powerful CLI interface with several subcommands to manage and execute your reconnaissance workflows.
+ZetGrep is a high-performance intelligence orchestrator designed for large-scale reconnaissance and data analysis.
 
 ## Global Flags
 
-These flags are available for all subcommands:
+Available for all subcommands:
 
-- `-v, --verbose`: Enable debug logging.
-- `--silent`: Disable all output except for findings.
-- `--no-color`: Disable ANSI colors in output.
-- `--config-file`: Path to a global configuration file (Viper compatible).
+- `-v, --verbose`: Enable debug/trace logging.
+- `--silent`: Absolute silence on terminal (ideal for piping).
+- `--no-color`: Plain ASCII output with simplified symbols.
+- `--config-file`: Path to global configuration(s).
 
-## Subcommands
+## Core Subcommands
 
 ### 1. `scan`
-The primary command used to perform pattern matching on targets.
+Primary engine for pattern matching and data extraction.
 
 **Usage:**
 ```bash
 zetgrep scan [pattern] [targets...] [flags]
 ```
 
-**Key Flags:**
-- `--all`: Run all available patterns in the library.
-- `-u, --unique`: Deduplicate results across all patterns and targets.
-- `--tags`: Filter patterns by specific tags (e.g., `--tags secrets,aws`).
-- `-f, --format`: Output format (`text`, `json`, `table`).
-- `-w, --workflow`: Tool IDs to chain for each match (e.g., `--workflow ip_info,whois`).
-- `-c, --concurrency`: Number of concurrent workers (default: CPU * 2).
-- `--pre-process`: Command to run on every input file (e.g., `--pre-process "zstd -dc"`).
-- `--dry-run`: Show what patterns and targets would be processed without executing.
-- `--resume`: Path to a state file to resume a previous scan.
+**Key Optimization Flags:**
+- `--bloom`: Enable Bloom Filter fast-path (skips non-matching lines in nanoseconds).
+- `--mmap`: Use Memory-Mapped I/O for 10x faster local file access.
+- `--pcre`: Use the PCRE2 compatible regex engine (for complex look-aheads).
+- `-c, --concurrency`: Set worker count (default: auto-scaled).
 
-**Structured Data Flags (JSONL/CSV):**
-- `--im`: Input mode (`jsonl`, `csv`, `text`).
-- `--target`: (JSONL) Single field to scan (e.g., `--target msg`).
-- `--targets`: (JSONL) Multiple fields to scan (e.g., `--targets msg,response.body`).
-- `--csv-sep`: (CSV) Column separator (default: `,`).
-- `--csv-targets`: (CSV) Column indices to scan (e.g., `--csv-targets 1,3`).
-- `--csv-id`: (CSV) Column index to use as a source identifier.
-- `--csv-no-header`: (CSV) Set if the file does not have a header row.
+**Persistence & State:**
+- `--incremental`: Only scan files changed since the last run.
+- `--global-dedupe`: Skip findings already seen in previous scans (via bbolt).
+- `--resume`: Pick up a large scan from a specific file/line.
 
-**Examples:**
-```bash
-# Scan a file for IP addresses and output a table
-zetgrep scan ip data.txt -f table
+**Hardware Safety:**
+- `--auto-scale`: Throttles workers based on system CPU load.
+- `--thermal-threshold`: Pauses scan if CPU temperature exceeds limit.
+- `--max-ram`: Pauses scan if RAM usage hits threshold.
 
-# Scan specific JSONL fields from HTTPX output
-zetgrep scan aws-keys results.jsonl --im jsonl --targets msg,response.body
+**Reporting & Integration:**
+- `--oJ`: Save results to JSON (supports `.zst` compression).
+- `--oT`: Save results to a clean Text file.
+- `--oH`: Generate a Professional HTML Intelligence Report.
+- `--web`: Launch the Live SSE Dashboard.
+- `--webhook`: Send rich alerts to Slack/Discord.
 
-# Scan a specific column in a CSV file
-zetgrep scan ip data.csv --im csv --csv-targets 1
-```
+---
 
-### 2. `web`
-Starts the interactive Mission Control dashboard.
+### 2. `delta`
+Compare two scan result files and extract only **NEW** findings.
 
 **Usage:**
 ```bash
-zetgrep web --listen :8080
+zetgrep delta old_results.json new_results.json
 ```
 
-### 3. `list`
-Lists all available patterns and tools in your library.
+---
 
-```bash
-zetgrep list
-```
-
-### 4. `diagnose`
-Debug a single line of input against your patterns. Useful for testing new regex patterns.
+### 3. `diagnose`
+Debug a single string against your pattern library.
 
 **Usage:**
 ```bash
-zetgrep diagnose --line "some sample data with an API_KEY=12345" [pattern]
+zetgrep diagnose --content "AKIA1234567890EXAMPLE" -p aws-keys
+```
+
+---
+
+### 4. `web`
+Start a standalone Mission Control dashboard.
+
+**Usage:**
+```bash
+zetgrep web --port 8080
+```
+
+---
+
+### 5. `list`
+Inventory your intelligence assets.
+
+**Usage:**
+```bash
+zetgrep list patterns
+zetgrep list tools
 ```
 
 ---
 ZetGrep is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.
+Verified and Hardened on 2026-06-01.

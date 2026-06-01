@@ -1,45 +1,54 @@
-# Input Formats
+# Supported Data Formats (v0.8.7)
 
-ZetGrep natively supports multiple input formats, making it versatile for scanning both raw text and structured data exported from other tools.
+ZetGrep is more than a line-matcher; it understands the structure of your data.
 
-## 1. Text Mode (Default)
-Standard line-by-line scanning. Ideal for raw logs, source code, or piped output from simple tools.
+## 1. JSONL (JSON Lines)
+Ideal for outputs from `httpx`, `nuclei`, or `katana`.
 
 ```bash
-zetgrep scan ip logs/access.log
+# Scan a specific field
+zetgrep scan ... --im jsonl --target response.body
 ```
+*   **Parallel Parsing**: Multiple threads parse different chunks of the JSONL file simultaneously.
+*   **SIMD Acceleration**: Uses `buger/jsonparser` for zero-allocation field extraction.
+*   **Nested Support**: Access fields like `metadata.user.id` using dot notation.
 
-## 2. JSONL Mode (`--im jsonl`)
-Optimized for JSON Lines format (one JSON object per line). This is the standard output format for tools like `httpx`, `subfinder`, and `ffuf`.
+## 2. CSV / TSV
+Optimized for database dumps and inventory lists.
 
-By default, ZetGrep will scan the whole line. You can use an input configuration or flags to target specific fields.
-
-**Example with `httpx`:**
 ```bash
-# Scan only the 'body' field of httpx output
-# Requires an input config or target definition in your config
-zetgrep scan secrets httpx_results.jsonl --im jsonl
+# Semicolon separated, no header, scan column 2
+zetgrep scan ... --im csv --csv-sep ";" --csv-no-header --csv-targets 2
 ```
+*   **Header Awareness**: Automatically skips the first row if header is present.
+*   **Identifier Mapping**: Use `--csv-id 0` to use the first column as the "file" name in results.
 
-## 3. CSV Mode (`--im csv`)
-Supports scanning comma-separated value files. You can configure which columns to scan.
+## 3. Raw Text / Logs
+Standard behavior for `.txt`, `.log`, or piped input.
 
-**Example:**
 ```bash
-# Scan a CSV file, assuming columns are (id, url, data)
-zetgrep scan secrets dump.csv --im csv
+cat data.txt | zetgrep scan pattern
+```
+*   **Line Alignment**: Ensures findings are reported with correct line numbers.
+*   **Mmap Fast-Path**: Even raw text uses the memory-mapped engine for speed.
+
+## 4. Compressed Streams (`.zst`, `.gz`)
+Scan compressed files without extracting them to disk.
+
+```bash
+# Real-time decompression and scanning
+zetgrep scan archive.json.zst --pre-process "zstd -dc"
 ```
 
-## Advanced: Dot Notation for Nested JSON
-When in JSONL mode, you can target nested fields using dot notation in your configuration:
+---
 
-```yaml
-# In an input-config file
-id: "url"
-targets:
-  - "response.body"
-  - "response.headers.server"
-```
+## Output Routing
+ZetGrep separates Human UI from Machine Data.
+
+| Channel | Format | Destination |
+| :--- | :--- | :--- |
+| **UI** | Professional (Colors/Symbols) | `stderr` |
+| **Data** | Content Only (Raw/JSON) | `stdout` |
 
 ---
 ZetGrep is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.

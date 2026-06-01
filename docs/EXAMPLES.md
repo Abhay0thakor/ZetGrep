@@ -1,55 +1,55 @@
-# Real-World Examples
+# Production Examples (v0.8.7)
 
-ZetGrep shines when integrated into a larger reconnaissance pipeline. Here are some common real-world scenarios.
+ZetGrep is optimized for high-throughput reconnaissance. Here are verified production workflows.
 
-## 1. Finding Secrets in HTTP Responses
-Generate JSONL data using `httpx` and then use ZetGrep to hunt for secrets across all bodies.
+## 1. 100GB+ Data Lake Secret Hunting
+Scan massive datasets using **Parallel Mmap** and **Bloom Filters**.
 
 ```bash
-# 1. Gather live subdomains
-subfinder -d target.com -silent > live_subs.txt
-
-# 2. Probe for web services and save full responses in JSONL
-httpx -l live_subs.txt -json -o results.jsonl -silent
-
-# 3. Use ZetGrep to scan all bodies for AWS keys
-zetgrep scan aws-keys results.jsonl --im jsonl
+# Scan a huge compressed dump for all patterns
+zetgrep scan lake.json.zst --all --bloom --mmap --oJ hits.json.zst --web
 ```
+*   `--bloom`: Skips non-matching lines instantly.
+*   `--mmap`: Maps the file into virtual memory for extreme speed.
+*   `--web`: Stream hits to your browser in real-time.
 
-## 2. Searching URL Archives for Interesting Paths
-Use `gau` or `waybackurls` to fetch archived URLs and filter them for debug pages or sensitive endpoints.
+## 2. CI/CD Incremental Scan
+Integrate into your pipeline to only scan changed files.
 
 ```bash
-# Fetch and scan URLs for debug pages
-gau target.com | zetgrep scan debug-pages -f table
+# Only scan new/modified files in the repo
+zetgrep scan . --all --incremental --global-dedupe --webhook "https://..."
 ```
+*   `--incremental`: Skips files already scanned.
+*   `--global-dedupe`: Ensures you don't get the same finding twice.
+*   `--webhook`: Alerts the team instantly.
 
-## 3. Extracting and Enriching IP Addresses from Logs
-Identify all IP addresses in a log file and automatically fetch their GeoIP information using a workflow.
+## 3. High-Signal Intelligence Reporting
+Extract and enrich data with visualization.
 
 ```bash
-# Requires the 'ip_info' tool to be configured in ~/.config/gf/tools/ip_info.yaml
-zetgrep scan ip /var/log/nginx/access.log --workflow ip_info --format table
+# Scan for IPs and enrich with GeoIP
+zetgrep scan ip logs/ -w ip_info --oH report.html --webhook-level high-interest
 ```
+*   `-w ip_info`: Runs the WHOIS/GeoIP tool on every hit.
+*   `--oH`: Generates a clean HTML dashboard with analytics.
+*   `--webhook-level`: Only alerts if the interest classifier is triggered.
 
-## 4. Deep Secret Hunting in JavaScript Files
-Chain `katana` with ZetGrep to find sensitive information inside beautified JavaScript.
+## 4. Historical Delta Analysis
+Find what changed between two reconnaissance runs.
 
 ```bash
-# Crawl and probe for JS files, then scan for patterns
-katana -u https://target.com -jc -d 2 -silent | \
-grep "\.js" | \
-httpx -silent | \
-zetgrep scan --all --unique
+# Compare last week's scan with today's
+zetgrep delta results_may_24.json results_june_01.json
 ```
+*   Outputs only the findings that are **new** in the second file.
 
-## 5. Cleaning up Data with Rewrite Mode
-If you have a JSONL file with escaped content (like `\n` or `\u0022`), you can use the interactive rewrite mode to beautify it before further analysis.
+## 5. Precise CSV Parsing
+Extracting credentials from specialized CSV outputs.
 
 ```bash
-# This will prompt for confirmation before modifying the file
-# Note: You can trigger this using specialized tool configs
-zetgrep scan --im jsonl --rewrite data.jsonl
+# Scan column 3 of a semicolon-separated file
+zetgrep scan secrets users.csv --csv-sep ";" --csv-targets 3 --csv-no-header
 ```
 
 ---

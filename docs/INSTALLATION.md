@@ -1,62 +1,43 @@
 # Installation Guide
 
-ZetGrep is written in Go and can be installed on any platform that supports the Go runtime.
+ZetGrep is written in Go and designed to run on Linux, Windows, and macOS.
 
-## Prerequisites
-
-- [Go](https://golang.org/doc/install) (v1.21 or later recommended)
-- `ripgrep` (Optional, but highly recommended for performance)
-- `grep` (Fallback engine)
-
-## Installation Methods
-
-### 1. Using `go install` (Recommended)
-The easiest way to install ZetGrep is using the `go install` command:
+## 1. Quick Install (Go)
+Requires Go 1.25 or higher.
 
 ```bash
 go install github.com/Abhay0thakor/ZetGrep/cmd/zetgrep@latest
 ```
 
-Ensure your `GOPATH/bin` directory is in your system's `PATH`.
-
-### 2. Building from Source
-If you want to build the binary manually:
-
+## 2. Build from Source
 ```bash
 # Clone the repository
 git clone https://github.com/Abhay0thakor/ZetGrep.git
 cd ZetGrep
 
-# Build using Makefile
+# Build the binary
 make build
 
-# Move the binary to your path
-sudo mv zetgrep /usr/local/bin/
+# Move to path (optional)
+mv zetgrep /usr/local/bin/
 ```
 
-### 3. Docker (Coming Soon)
-A Dockerfile will be provided in future releases for containerized environments.
-
-## Post-Installation
-
-### Verify Installation
-Check if ZetGrep is installed correctly by running:
+## 3. Post-Installation (Setup Library)
+ZetGrep is most powerful when used with the pattern library.
 
 ```bash
-zetgrep version
-```
-
-### Setup Patterns and Tools
-ZetGrep looks for patterns and tools in the following locations by default:
-1. `~/.config/gf/patterns` and `~/.config/gf/tools`
-2. `./patterns` and `./tools` (relative to current directory)
-
-You can copy the provided library to your config directory:
-```bash
+# Create config directory
 mkdir -p ~/.config/gf
+
+# Clone/Copy patterns (e.g. from the library folder)
 cp -r library/patterns ~/.config/gf/
 cp -r library/tools ~/.config/gf/
 ```
+
+---
+
+## 🏗️ Docker (Coming Soon)
+A high-performance containerized version of ZetGrep is under development.
 
 ---
 ZetGrep is proudly sponsored by **[Toolsura](https://www.toolsura.com/)**.
