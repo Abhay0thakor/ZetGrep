@@ -60,6 +60,7 @@ type ScannerOptions struct {
 	UsePcre          bool
 	UseMmap          bool
 	UseBloom         bool
+	Quiet            bool
 	Webhook          string
 	WebhookType      string
 	WebhookLevel     string

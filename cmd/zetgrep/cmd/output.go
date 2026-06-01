@@ -139,8 +139,10 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, symbolBranch), au.Magenta(td.Label), au.White(td.Value))
 		}
 
-		// A. Show Pro UI
-		fmt.Fprint(uiOut, proUI)
+		// A. Show Pro UI (Skip if quiet)
+		if !quiet {
+			fmt.Fprint(uiOut, proUI)
+		}
 
 		// B. Save Pro UI to dedicated text file (oT)
 		if textSW != nil {

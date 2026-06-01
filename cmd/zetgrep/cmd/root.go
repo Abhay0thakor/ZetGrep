@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.8.7"
+	version = "v0.8.8"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -38,6 +38,7 @@ var (
 	verbose        bool
 	silent         bool
 	noColor        bool
+	quiet          bool
 	configFiles    []string
 	patternsDir    string
 	toolsDir       string
@@ -337,6 +338,7 @@ var rootCmd = &cobra.Command{
 				UsePcre:          usePcre,
 				UseMmap:          useMmap,
 				UseBloom:         useBloom,
+				Quiet:            quiet,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,
@@ -367,8 +369,9 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(versionCmd)
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose mode")
-	rootCmd.PersistentFlags().BoolVar(&silent, "silent", false, "silent mode")
+	rootCmd.PersistentFlags().BoolVar(&silent, "silent", false, "silent mode (no output at all)")
 	rootCmd.PersistentFlags().BoolVar(&noColor, "no-color", false, "disable color")
+	rootCmd.PersistentFlags().BoolVarP(&quiet, "quiet", "q", false, "quiet mode (show progress bar but hide hits on terminal)")
 	rootCmd.PersistentFlags().StringSliceVar(&configFiles, "config-file", nil, "path to global config")
 	rootCmd.PersistentFlags().StringVar(&patternsDir, "pd", "", "patterns directory")
 	rootCmd.PersistentFlags().StringVar(&toolsDir, "td", "", "tools directory")
