@@ -49,6 +49,6 @@ var diagCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(diagCmd)
-	diagCmd.Flags().StringVarP(&diagLine, "line", "l", "", "line to diagnose")
-	diagCmd.MarkFlagRequired("line")
+	diagCmd.Flags().StringVar(&diagLine, "line", "", "line to diagnose")
+	diagCmd.Flags().StringVar(&diagLine, "content", "", "line to diagnose (alias for --line)")
 }
