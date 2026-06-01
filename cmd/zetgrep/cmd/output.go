@@ -66,6 +66,17 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		uiOut = io.Discard
 	}
 
+	// Detection for Terminal
+	isTerminal := true
+	if stat, _ := os.Stdout.Stat(); (stat.Mode() & os.ModeCharDevice) == 0 {
+		isTerminal = false
+	}
+	
+	// If quiet, suppress stdout data ONLY IF it's going to terminal
+	if quiet && isTerminal {
+		dataOut = io.Discard
+	}
+
 	symbolArrow := "➜"
 	symbolBranch := "└"
 	symbolCheck := "✔"
@@ -111,7 +122,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		}
 	}
 
-	if (jsonMode || format == "json") && legacyDataOut != nil {
+	if (jsonMode || format == "json") && legacyDataOut != nil && legacyDataOut != io.Discard {
 		fmt.Fprintf(legacyDataOut, "[\n")
 	}
 	if jsonSW != nil {
@@ -128,7 +139,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			htmlResults = append(htmlResults, res)
 		}
 
-		// Generate the Professional UI string
+		// Generate UI String
 		entropyStr := ""
 		if res.Entropy > 4.0 {
 			entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String()
@@ -139,7 +150,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, symbolBranch), au.Magenta(td.Label), au.White(td.Value))
 		}
 
-		// A. Show Pro UI (Skip if quiet)
+		// A. Show Pro UI (Hide if quiet or silent)
 		if !quiet {
 			fmt.Fprint(uiOut, proUI)
 		}
@@ -168,21 +179,23 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		}
 
 		// E. Legacy Data Stream (Stdout or -o)
-		if jsonMode || format == "json" {
-			b, _ := json.Marshal(res)
-			if !first {
-				fmt.Fprintf(legacyDataOut, ",\n")
-			}
-			fmt.Fprint(legacyDataOut, string(b))
-		} else if format == "csv" {
-			csvWriter.Write([]string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content})
-		} else if format == "table" {
-			table.Append(res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content)
-		} else if outputTemplate != "" {
-			fmt.Fprintln(legacyDataOut, formatResult(outputTemplate, res))
-		} else {
-			if format == "text" || format == "" {
-				fmt.Fprintln(legacyDataOut, res.Content)
+		if legacyDataOut != io.Discard {
+			if jsonMode || format == "json" {
+				b, _ := json.Marshal(res)
+				if !first {
+					fmt.Fprintf(legacyDataOut, ",\n")
+				}
+				fmt.Fprint(legacyDataOut, string(b))
+			} else if format == "csv" {
+				csvWriter.Write([]string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content})
+			} else if format == "table" {
+				table.Append(res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content)
+			} else if outputTemplate != "" {
+				fmt.Fprintln(legacyDataOut, formatResult(outputTemplate, res))
+			} else {
+				if format == "text" || format == "" {
+					fmt.Fprintln(legacyDataOut, res.Content)
+				}
 			}
 		}
 
@@ -191,7 +204,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	}
 
 	// 3. Finalize Streams
-	if (jsonMode || format == "json") && legacyDataOut != nil {
+	if (jsonMode || format == "json") && legacyDataOut != nil && legacyDataOut != io.Discard {
 		fmt.Fprintf(legacyDataOut, "\n]\n")
 	}
 	if jsonSW != nil {

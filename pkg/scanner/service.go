@@ -720,6 +720,11 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 
 func (s *ScannerService) LoadResumeState(file string) error {
 	file = utils.ExpandPath(file)
+	if _, err := os.Stat(file); os.IsNotExist(err) {
+		// Fresh start, not an error
+		s.Resume = models.ResumeConfig{}
+		return nil
+	}
 	b, err := os.ReadFile(file)
 	if err != nil { return err }
 	return json.Unmarshal(b, &s.Resume)
