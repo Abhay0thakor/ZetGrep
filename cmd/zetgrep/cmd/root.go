@@ -21,7 +21,7 @@ import (
 )
 
 var (
-	version = "v0.8.3"
+	version = "v0.8.4"
 	banner  = `
   ______     _   _____                 
  |___  /    | | |  __ \                
@@ -114,7 +114,7 @@ var rootCmd = &cobra.Command{
 		}
 	},
 	Run: func(cmd *cobra.Command, args []string) {
-		if len(args) == 0 && !allMode && processFile == "" {
+		if len(args) == 0 && !allMode && processFile == "" && !stdin {
 			cmd.Help()
 			return
 		}

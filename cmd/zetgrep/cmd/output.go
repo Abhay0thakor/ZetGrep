@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log/slog"
 	"os"
 	"regexp"
 	"strings"
@@ -60,23 +59,33 @@ func (sw *SmartWriter) Close() error {
 
 func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	// 1. Setup Stream Routing
-	uiOut := os.Stderr
-	dataOut := os.Stdout
+	var uiOut io.Writer = os.Stderr
+	var dataOut io.Writer = os.Stdout
+
+	if silent {
+		uiOut = io.Discard
+	}
+
+	symbolArrow := "➜"
+	symbolBranch := "└"
+	symbolCheck := "✔"
+	lineChar := "─"
+
+	if noColor {
+		symbolArrow = ">"
+		symbolBranch = "|"
+		symbolCheck = "[+]"
+		lineChar = "-"
+	}
 
 	var htmlResults []*models.Result
 
 	// New Dedicated Multi-Output Streams
-	jsonSW, err := newSmartWriter(outputJSON)
-	if err != nil {
-		slog.Error("Error creating JSON output file", "path", outputJSON, "error", err)
-	}
-	textSW, err := newSmartWriter(outputText)
-	if err != nil {
-		slog.Error("Error creating Text output file", "path", outputText, "error", err)
-	}
+	jsonSW, _ := newSmartWriter(outputJSON)
+	textSW, _ := newSmartWriter(outputText)
 
 	// Legacy -o support
-	legacySW, err := newSmartWriter(outputFile)
+	legacySW, _ := newSmartWriter(outputFile)
 	var legacyDataOut io.Writer = dataOut
 	if legacySW != nil && !reportMode {
 		legacyDataOut = legacySW
@@ -102,7 +111,6 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		}
 	}
 
-	// 2. Initial Headers
 	if (jsonMode || format == "json") && legacyDataOut != nil {
 		fmt.Fprintf(legacyDataOut, "[\n")
 	}
@@ -110,7 +118,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		fmt.Fprintf(jsonSW, "[\n")
 	}
 
-	// 3. Processing Loop
+	// 2. Processing Loop
 	hitCount := 0
 	first := true
 	for res := range resultChan {
@@ -126,19 +134,16 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			entropyStr = au.Bold(au.Red(fmt.Sprintf(" (H:%.1f)", res.Entropy))).String()
 		}
 		matchPrefix := fmt.Sprintf("[%s] %s:%d%s", au.Bold(au.Yellow(res.Pattern)), au.Cyan(res.File), res.Line, entropyStr)
-		proUI := fmt.Sprintf("%s\n  %s %s\n", matchPrefix, au.Gray(15, "➜"), au.White(res.Content))
+		proUI := fmt.Sprintf("%s\n  %s %s\n", matchPrefix, au.Gray(15, symbolArrow), au.White(res.Content))
 		for _, td := range res.ToolData {
-			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, "└"), au.Magenta(td.Label), au.White(td.Value))
+			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, symbolBranch), au.Magenta(td.Label), au.White(td.Value))
 		}
 
-		// A. Always show Pro UI on terminal (unless silent)
-		if !silent {
-			fmt.Fprint(uiOut, proUI)
-		}
+		// A. Show Pro UI
+		fmt.Fprint(uiOut, proUI)
 
 		// B. Save Pro UI to dedicated text file (oT)
 		if textSW != nil {
-			// Strip ANSI colors for file output
 			fmt.Fprint(textSW, stripANSI(proUI))
 		}
 
@@ -183,7 +188,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		scanner.PutResult(res)
 	}
 
-	// 4. Finalize Streams
+	// 3. Finalize Streams
 	if (jsonMode || format == "json") && legacyDataOut != nil {
 		fmt.Fprintf(legacyDataOut, "\n]\n")
 	}
@@ -207,7 +212,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		reportFile.Close()
 	}
 
-	// Generate HTML Intelligence Report
+	// Generate HTML Report
 	if outputHTML != "" {
 		reportData := report.ReportData{
 			Title:     "ZetGrep Scan Results",
@@ -217,26 +222,26 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			TotalHits: hitCount,
 			Results:   htmlResults,
 		}
-		if err := report.GenerateHTMLReport(reportData, outputHTML); err != nil {
-			slog.Error("Error generating HTML report", "error", err)
-		}
+		_ = report.GenerateHTMLReport(reportData, outputHTML)
 	}
 
 	// Summary
-	duration := time.Since(start).Round(time.Millisecond)
-	fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat("─", 80)))
-	summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
-	
-	var saved []string
-	if outputJSON != "" { saved = append(saved, outputJSON) }
-	if outputText != "" { saved = append(saved, outputText) }
-	if outputHTML != "" { saved = append(saved, outputHTML) }
-	if outputFile != "" { saved = append(saved, outputFile) }
-	
-	if len(saved) > 0 {
-		summary += fmt.Sprintf(" | Saved to: %s", au.Underline(strings.Join(saved, ", ")))
+	if !silent {
+		duration := time.Since(start).Round(time.Millisecond)
+		fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat(lineChar, 80)))
+		summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
+		
+		var saved []string
+		if outputJSON != "" { saved = append(saved, outputJSON) }
+		if outputText != "" { saved = append(saved, outputText) }
+		if outputHTML != "" { saved = append(saved, outputHTML) }
+		if outputFile != "" { saved = append(saved, outputFile) }
+		
+		if len(saved) > 0 {
+			summary += fmt.Sprintf(" | Saved to: %s", au.Underline(strings.Join(saved, ", ")))
+		}
+		fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green(symbolCheck), summary)
 	}
-	fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green("✔"), summary)
 }
 
 func formatResult(tmpl string, res *models.Result) string {
@@ -246,6 +251,17 @@ func formatResult(tmpl string, res *models.Result) string {
 	out = strings.ReplaceAll(out, "{{line}}", fmt.Sprintf("%d", res.Line))
 	out = strings.ReplaceAll(out, "{{content}}", res.Content)
 	out = strings.ReplaceAll(out, "{{entropy}}", fmt.Sprintf("%.2f", res.Entropy))
+	
+	mainMatch := res.Content
+	if len(res.Matches) > 0 {
+		mainMatch = res.Matches[0]
+	}
+	out = strings.ReplaceAll(out, "{{match}}", mainMatch)
+
+	for i, m := range res.Matches {
+		out = strings.ReplaceAll(out, fmt.Sprintf("{{match[%d]}}", i), m)
+	}
+
 	for _, td := range res.ToolData {
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.ToolID), td.Value)
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.Label), td.Value)
