@@ -339,6 +339,7 @@ var rootCmd = &cobra.Command{
 				UseMmap:          useMmap,
 				UseBloom:         useBloom,
 				Quiet:            quiet,
+				NoColor:          noColor,
 				Incremental:      incremental,
 				GlobalDedupe:     globalDedupe,
 				StateDB:          stateDB,

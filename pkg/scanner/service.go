@@ -61,6 +61,7 @@ type ScannerOptions struct {
 	UseMmap          bool
 	UseBloom         bool
 	Quiet            bool
+	NoColor          bool
 	Webhook          string
 	WebhookType      string
 	WebhookLevel     string
@@ -476,11 +477,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				BarStart:      "[",
 				BarEnd:        "]",
 			}
-			if !noColor {
-				theme.Saucer = au.Green("=").String()
-				theme.SaucerHead = au.Green(">").String()
-			}
-
 			bar = progressbar.NewOptions64(globalTotalSize,
 				progressbar.OptionSetDescription("Scanning"),
 				progressbar.OptionSetWriter(os.Stderr),
@@ -733,7 +729,6 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 func (s *ScannerService) LoadResumeState(file string) error {
 	file = utils.ExpandPath(file)
 	if _, err := os.Stat(file); os.IsNotExist(err) {
-		// Fresh start, not an error
 		s.Resume = models.ResumeConfig{}
 		return nil
 	}
