@@ -469,21 +469,29 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 		var bar *progressbar.ProgressBar
 		if !opts.Silent && globalTotalSize > 0 {
+			theme := progressbar.Theme{
+				Saucer:        "=",
+				SaucerHead:    ">",
+				SaucerPadding: " ",
+				BarStart:      "[",
+				BarEnd:        "]",
+			}
+			if !noColor {
+				theme.Saucer = au.Green("=").String()
+				theme.SaucerHead = au.Green(">").String()
+			}
+
 			bar = progressbar.NewOptions64(globalTotalSize,
 				progressbar.OptionSetDescription("Scanning"),
 				progressbar.OptionSetWriter(os.Stderr),
 				progressbar.OptionShowBytes(true),
-				progressbar.OptionSetWidth(15),
+				progressbar.OptionSetWidth(30),
 				progressbar.OptionThrottle(65*time.Millisecond),
 				progressbar.OptionShowCount(),
 				progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
 				progressbar.OptionSpinnerType(14),
-				progressbar.OptionFullWidth(),
 				progressbar.OptionSetPredictTime(true),
-				progressbar.OptionSetTheme(progressbar.Theme{
-					Saucer: "[green]=[reset]", SaucerHead: "[green]>[reset]", SaucerPadding: " ",
-					BarStart: "[", BarEnd: "]",
-				}),
+				progressbar.OptionSetTheme(theme),
 			)
 		}
 
@@ -519,13 +527,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						for rec := range recs {
 							// Update progress bar for mmap path
 							if bar != nil {
-								// In parallel mode, 'Line' currently holds the byte offset
-								// But we need the increment. This is tricky.
-								// Better: track processed records and estimate or use a shared counter.
-								// Actually, let's just update the bar periodically based on records
-								// or let the parser handle it.
-								// For now, let's just Add the size of the content
-								bar.Add(len(rec.Content))
+								bar.Add(rec.RawLength)
 							}
 							select {
 							case <-ctx.Done():

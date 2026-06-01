@@ -93,7 +93,7 @@ func (p *FastJSONParser) GetRecords(ctx context.Context, reader io.Reader, path 
 					}
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal}:
+					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: len(line) + 1}:
 					}
 				}
 			}
@@ -208,7 +208,7 @@ func (p *FastJSONParser) GetRecordsParallel(ctx context.Context, data []byte, pa
 						}
 						select {
 						case <-ctx.Done(): return
-						case out <- ScanRecord{Content: content, Line: int(curr), File: displayFile, ID: idVal}:
+						case out <- ScanRecord{Content: content, Line: int(curr), File: displayFile, ID: idVal, RawLength: len(line) + 1}:
 						}
 					}
 				}

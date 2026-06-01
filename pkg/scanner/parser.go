@@ -15,10 +15,11 @@ import (
 
 // ScanRecord represents a single unit of work (a line, a CSV row, etc.)
 type ScanRecord struct {
-	Content []byte
-	ID      string
-	Line    int
-	File    string
+	Content   []byte
+	ID        string
+	Line      int
+	File      string
+	RawLength int
 }
 
 // Parser defines the interface for different input formats
@@ -56,9 +57,10 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 				PutBuffer(content)
 				return
 			case out <- ScanRecord{
-				Content: content,
-				Line:    lineNum,
-				File:    path,
+				Content:   content,
+				Line:      lineNum,
+				File:      path,
+				RawLength: len(line) + 1,
 			}:
 			}
 		}
@@ -121,9 +123,10 @@ func (p *TextParser) GetRecordsParallel(ctx context.Context, data []byte, path s
 					PutBuffer(content)
 					return
 				case out <- ScanRecord{
-					Content: content,
-					Line:    int(curr),
-					File:    path,
+					Content:   content,
+					Line:      int(curr),
+					File:      path,
+					RawLength: len(line) + 1,
 				}:
 				}
 				curr = lineEnd + 1
@@ -192,7 +195,7 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 					content := []byte(record[idx])
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal}:
+					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: len(content)}:
 					}
 				}
 			}
