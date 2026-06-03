@@ -715,7 +715,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 				content, ok = getNestedField(data, targetField)
 			}
 			if ok {
-				if s.Config.Input.Decode { content = unescapeContent([]byte(content)) }
+				if s.Config.Input.Decode { content = string(unescapeContent([]byte(content))) }
 				contents = append(contents, []byte(content))
 			}
 		}
