@@ -311,10 +311,8 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
-	// Larger buffer to prevent worker stall
 	resultChan := make(chan *models.Result, 5000)
 
-	// Pre-calculate total size
 	targets := s.resolveTargets(opts.TargetPaths)
 	var globalTotalSize int64
 	for _, path := range targets {
@@ -323,6 +321,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 
 	var bar *progressbar.ProgressBar
 	if !opts.Silent && globalTotalSize > 0 {
+		theme := progressbar.Theme{
+			Saucer: "=", SaucerHead: ">", SaucerPadding: " ", BarStart: "[", BarEnd: "]",
+		}
 		bar = progressbar.NewOptions64(globalTotalSize,
 			progressbar.OptionSetDescription("Scanning"),
 			progressbar.OptionSetWriter(os.Stderr),
@@ -333,9 +334,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
 			progressbar.OptionSpinnerType(14),
 			progressbar.OptionSetPredictTime(true),
-			progressbar.OptionSetTheme(progressbar.Theme{
-				Saucer: "=", SaucerHead: ">", SaucerPadding: " ", BarStart: "[", BarEnd: "]",
-			}),
+			progressbar.OptionSetTheme(theme),
 		)
 	}
 
@@ -410,6 +409,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				if atomic.LoadInt32(&s.isThrottled) == 1 { time.Sleep(100 * time.Millisecond) }
 				content := rec.Content
 				if preFilter != nil && !preFilter.MayMatch(content) {
+					if bar != nil { bar.Add(rec.RawLength) }
 					PutBuffer(content)
 					continue
 				}
@@ -457,6 +457,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						}
 					}
 				}
+				if bar != nil { bar.Add(rec.RawLength) }
 				PutBuffer(content)
 			}
 		}()
@@ -503,7 +504,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					if err == nil {
 						recs, _ := s.Parser.GetRecordsParallel(ctx, m, path, numWorkers)
 						for rec := range recs {
-							if bar != nil && rec.RawLength > 0 { bar.Add(rec.RawLength) }
 							select {
 							case <-ctx.Done(): m.Unmap(); f.Close(); return
 							case recordChan <- rec:
@@ -530,10 +530,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					progressMu.Lock()
 					defer progressMu.Unlock()
 					globalBytesRead += int64(n)
-					
-					// Update bar for standard reader path
-					if bar != nil { bar.Add(n) }
-
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
@@ -595,7 +591,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			if opts.Incremental && opts.StateDB != nil && err == nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
 		}
 		close(recordChan)
-		wg.Wait() // Wait for workers to finish before closing results
+		wg.Wait()
 		
 		if opts.Notify {
 			finalHits := 0
