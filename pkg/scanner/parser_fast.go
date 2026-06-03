@@ -91,9 +91,16 @@ func (p *FastJSONParser) GetRecords(ctx context.Context, reader io.Reader, path 
 					if idVal != "" {
 						displayFile = fmt.Sprintf("%s:%s", path, idVal)
 					}
+					
+					// Avoid double counting progress
+					progLen := 0
+					if i == 0 {
+						progLen = len(line) + 1
+					}
+
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: len(line) + 1}:
+					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: progLen}:
 					}
 				}
 			}
@@ -103,7 +110,7 @@ func (p *FastJSONParser) GetRecords(ctx context.Context, reader io.Reader, path 
 }
 
 func (p *FastJSONParser) GetRecordsParallel(ctx context.Context, data []byte, path string, concurrency int) (<-chan ScanRecord, error) {
-	out := make(chan ScanRecord, 500)
+	out := make(chan ScanRecord, 1000)
 	if concurrency <= 0 {
 		concurrency = runtime.NumCPU()
 	}
@@ -206,9 +213,15 @@ func (p *FastJSONParser) GetRecordsParallel(ctx context.Context, data []byte, pa
 						if idVal != "" {
 							displayFile = fmt.Sprintf("%s:%s", path, idVal)
 						}
+
+						progLen := 0
+						if i == 0 {
+							progLen = len(line) + 1
+						}
+
 						select {
 						case <-ctx.Done(): return
-						case out <- ScanRecord{Content: content, Line: int(curr), File: displayFile, ID: idVal, RawLength: len(line) + 1}:
+						case out <- ScanRecord{Content: content, Line: int(curr), File: displayFile, ID: idVal, RawLength: progLen}:
 						}
 					}
 				}

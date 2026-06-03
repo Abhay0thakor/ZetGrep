@@ -13,13 +13,13 @@ import (
 	"github.com/Abhay0thakor/ZetGrep/pkg/models"
 )
 
-// ScanRecord represents a single unit of work (a line, a CSV row, etc.)
+// ScanRecord represents a single unit of work
 type ScanRecord struct {
 	Content   []byte
 	ID        string
 	Line      int
 	File      string
-	RawLength int
+	RawLength int // Number of bytes to increment the progress bar
 }
 
 // Parser defines the interface for different input formats
@@ -34,7 +34,7 @@ type TextParser struct {
 }
 
 func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path string) (<-chan ScanRecord, error) {
-	out := make(chan ScanRecord, 100)
+	out := make(chan ScanRecord, 500)
 	go func() {
 		defer close(out)
 		scanner := bufio.NewScanner(reader)
@@ -69,10 +69,8 @@ func (p *TextParser) GetRecords(ctx context.Context, reader io.Reader, path stri
 }
 
 func (p *TextParser) GetRecordsParallel(ctx context.Context, data []byte, path string, concurrency int) (<-chan ScanRecord, error) {
-	out := make(chan ScanRecord, 500)
-	if concurrency <= 0 {
-		concurrency = runtime.NumCPU()
-	}
+	out := make(chan ScanRecord, 1000)
+	if concurrency <= 0 { concurrency = runtime.NumCPU() }
 
 	var wg sync.WaitGroup
 	chunkSize := int64(len(data)) / int64(concurrency)
@@ -81,40 +79,25 @@ func (p *TextParser) GetRecordsParallel(ctx context.Context, data []byte, path s
 		wg.Add(1)
 		go func(id int) {
 			defer wg.Done()
-			start := int64(id) * chunkSize
-			end := int64(id+1) * chunkSize
-			if id == concurrency-1 {
-				end = int64(len(data))
-			}
+			start, end := int64(id)*chunkSize, int64(id+1)*chunkSize
+			if id == concurrency-1 { end = int64(len(data)) }
 
 			if start > 0 {
-				for start < int64(len(data)) && data[start-1] != '\n' {
-					start++
-				}
+				for start < int64(len(data)) && data[start-1] != '\n' { start++ }
 			}
-
 			if end < int64(len(data)) {
-				for end < int64(len(data)) && data[end-1] != '\n' {
-					end++
-				}
+				for end < int64(len(data)) && data[end-1] != '\n' { end++ }
 			}
-
-			if start >= end {
-				return
-			}
+			if start >= end { return }
 
 			curr := start
 			for curr < end {
 				lineEnd := curr
-				for lineEnd < end && data[lineEnd] != '\n' {
-					lineEnd++
-				}
-				
+				for lineEnd < end && data[lineEnd] != '\n' { lineEnd++ }
 				line := data[curr:lineEnd]
+				
 				content := GetBuffer()
-				if cap(content) < len(line) {
-					content = make([]byte, len(line))
-				}
+				if cap(content) < len(line) { content = make([]byte, len(line)) }
 				content = content[:len(line)]
 				copy(content, line)
 
@@ -134,11 +117,7 @@ func (p *TextParser) GetRecordsParallel(ctx context.Context, data []byte, path s
 		}(i)
 	}
 
-	go func() {
-		wg.Wait()
-		close(out)
-	}()
-
+	go func() { wg.Wait(); close(out) }()
 	return out, nil
 }
 
@@ -148,11 +127,9 @@ type CSVParser struct {
 }
 
 func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path string) (<-chan ScanRecord, error) {
-	out := make(chan ScanRecord, 100)
+	out := make(chan ScanRecord, 500)
 	separator := p.Config.CSVConfig.Separator
-	if separator == "" {
-		separator = ","
-	}
+	if separator == "" { separator = "," }
 	
 	go func() {
 		defer close(out)
@@ -166,36 +143,31 @@ func (p *CSVParser) GetRecords(ctx context.Context, reader io.Reader, path strin
 		lineNum := 0
 		for {
 			record, err := csvReader.Read()
-			if err != nil {
-				break
-			}
+			if err != nil { break }
 			lineNum++
 
-			if lineNum == 1 && p.Config.CSVConfig.HasHeader {
-				continue
-			}
+			if lineNum == 1 && p.Config.CSVConfig.HasHeader { continue }
 
 			idVal := ""
-			if idIdx < len(record) {
-				idVal = record[idIdx]
-			}
+			if idIdx < len(record) { idVal = record[idIdx] }
 
 			if len(targetIdxs) == 0 {
-				for i := range record {
-					targetIdxs = append(targetIdxs, i)
-				}
+				for i := range record { targetIdxs = append(targetIdxs, i) }
 			}
 
-			for _, idx := range targetIdxs {
+			for i, idx := range targetIdxs {
 				if idx < len(record) && record[idx] != "" {
 					displayFile := path
-					if idVal != "" {
-						displayFile = fmt.Sprintf("%s:%s", path, idVal)
-					}
+					if idVal != "" { displayFile = fmt.Sprintf("%s:%s", path, idVal) }
 					content := []byte(record[idx])
+					
+					// Only add RawLength for the first target of a record to avoid double-counting
+					progLen := 0
+					if i == 0 { progLen = len(content) } 
+
 					select {
 					case <-ctx.Done(): return
-					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: len(content)}:
+					case out <- ScanRecord{Content: content, Line: lineNum, File: displayFile, ID: idVal, RawLength: progLen}:
 					}
 				}
 			}
@@ -218,16 +190,8 @@ func getNestedFieldSplit(data map[string]interface{}, parts []string) (string, b
 			return "", false
 		}
 	}
-	
 	var val string
-	if str, ok := current.(string); ok {
-		val = str
-	} else if current != nil {
-		val = fmt.Sprintf("%v", current)
-	} else {
-		return "", false
-	}
-
+	if str, ok := current.(string); ok { val = str } else if current != nil { val = fmt.Sprintf("%v", current) } else { return "", false }
 	return val, true
 }
 

@@ -522,7 +522,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						recs, _ := s.Parser.GetRecordsParallel(ctx, m, path, numWorkers)
 						for rec := range recs {
 							// Update progress bar for mmap path
-							if bar != nil {
+							if bar != nil && rec.RawLength > 0 {
 								bar.Add(rec.RawLength)
 							}
 							select {
@@ -550,14 +550,13 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			trackedReader := &progressReader{
 				r: sourceReader,
 				onRead: func(n int) {
+					// In non-mmap mode, the parser handles bar updates via ScanRecord.RawLength
+					// To avoid double counting, we don't update bar here anymore.
+					// We only use this to track globalBytesRead for notifications/cooldown.
 					progressMu.Lock()
 					defer progressMu.Unlock()
 					globalBytesRead += int64(n)
-					if bar != nil {
-						bar.Add(n)
-						pctFloat := (float64(globalBytesRead) / float64(globalTotalSize)) * 100
-						bar.Describe(fmt.Sprintf("Scanning [%.1f%%]", pctFloat))
-					}
+					
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
@@ -598,6 +597,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				recordCount := 0
 				for rec := range recs {
 					recordCount++
+					if bar != nil && rec.RawLength > 0 {
+						bar.Add(rec.RawLength)
+					}
 					if opts.ResumeFile != "" && recordCount % 10000 == 0 {
 						s.Resume.FileIndex = i
 						s.Resume.LineIndex = rec.Line
