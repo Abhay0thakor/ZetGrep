@@ -513,6 +513,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 			}
 
+			// Update bar description for current file
+			if bar != nil {
+				bar.Describe(fmt.Sprintf("Scanning %s", filepath.Base(path)))
+			}
+
 			// Try Mmap Parallel Path if enabled
 			if opts.UseMmap && s.Config.Input.PreProcess == "" && path != "stdin" && path != "-" {
 				f, err := os.Open(path)
@@ -532,7 +537,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 							}
 						}
 						m.Unmap(); f.Close()
-						if !opts.Silent { progressMu.Lock(); if bar != nil { bar.Describe(fmt.Sprintf("Scanned %s", filepath.Base(path))) }; progressMu.Unlock() }
 						if opts.Incremental && opts.StateDB != nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
 						continue
 					}
