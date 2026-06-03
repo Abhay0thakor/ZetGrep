@@ -26,35 +26,22 @@ type SmartWriter struct {
 }
 
 func newSmartWriter(path string) (*SmartWriter, error) {
-	if path == "" {
-		return nil, nil
-	}
+	if path == "" { return nil, nil }
 	f, err := os.Create(path)
-	if err != nil {
-		return nil, err
-	}
-
+	if err != nil { return nil, err }
 	sw := &SmartWriter{file: f, writer: f}
 	if strings.HasSuffix(strings.ToLower(path), ".zst") {
 		enc, err := zstd.NewWriter(f)
-		if err != nil {
-			f.Close()
-			return nil, err
-		}
+		if err != nil { f.Close(); return nil, err }
 		sw.zstd = enc
 		sw.writer = enc
 	}
 	return sw, nil
 }
 
-func (sw *SmartWriter) Write(p []byte) (n int, err error) {
-	return sw.writer.Write(p)
-}
-
+func (sw *SmartWriter) Write(p []byte) (n int, err error) { return sw.writer.Write(p) }
 func (sw *SmartWriter) Close() error {
-	if sw.zstd != nil {
-		sw.zstd.Close()
-	}
+	if sw.zstd != nil { sw.zstd.Close() }
 	return sw.file.Close()
 }
 
@@ -67,7 +54,8 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		uiOut = io.Discard
 	}
 
-	// If quiet, suppress stdout data ONLY IF it's going directly to terminal
+	// Quiet Mode Fix: If Stdout is a terminal and -q is used, DISCARD the stream.
+	// This prevents the engine from hanging on slow terminal output when many hits occur.
 	if quiet && isatty.IsTerminal(os.Stdout.Fd()) {
 		dataOut = io.Discard
 	}
@@ -85,22 +73,16 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	}
 
 	var htmlResults []*models.Result
-
-	// New Dedicated Multi-Output Streams
 	jsonSW, _ := newSmartWriter(outputJSON)
 	textSW, _ := newSmartWriter(outputText)
 
 	// Legacy -o support
 	legacySW, _ := newSmartWriter(outputFile)
 	var legacyDataOut io.Writer = dataOut
-	if legacySW != nil && !reportMode {
-		legacyDataOut = legacySW
-	}
+	if legacySW != nil && !reportMode { legacyDataOut = legacySW }
 
 	var csvWriter *csv.Writer
-	if format == "csv" {
-		csvWriter = csv.NewWriter(legacyDataOut)
-	}
+	if format == "csv" { csvWriter = csv.NewWriter(legacyDataOut) }
 
 	var table *tablewriter.Table
 	if format == "table" {
@@ -120,19 +102,14 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 	if (jsonMode || format == "json") && legacyDataOut != nil && legacyDataOut != io.Discard {
 		fmt.Fprintf(legacyDataOut, "[\n")
 	}
-	if jsonSW != nil {
-		fmt.Fprintf(jsonSW, "[\n")
-	}
+	if jsonSW != nil { fmt.Fprintf(jsonSW, "[\n") }
 
 	// 2. Processing Loop
 	hitCount := 0
 	first := true
 	for res := range resultChan {
 		hitCount++
-
-		if outputHTML != "" {
-			htmlResults = append(htmlResults, res)
-		}
+		if outputHTML != "" { htmlResults = append(htmlResults, res) }
 
 		// Generate UI String
 		entropyStr := ""
@@ -145,41 +122,31 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			proUI += fmt.Sprintf("    %s %s: %s\n", au.Gray(15, symbolBranch), au.Magenta(td.Label), au.White(td.Value))
 		}
 
-		// A. Show Pro UI (Hide if quiet or silent)
-		if !quiet {
-			fmt.Fprint(uiOut, proUI)
-		}
+		// A. Show Pro UI (Hide if quiet)
+		if !quiet { fmt.Fprint(uiOut, proUI) }
 
-		// B. Save Pro UI to dedicated text file (oT)
-		if textSW != nil {
-			fmt.Fprint(textSW, stripANSI(proUI))
-		}
+		// B. Save Pro UI to text file
+		if textSW != nil { fmt.Fprint(textSW, stripANSI(proUI)) }
 
-		// C. Save JSON to dedicated file (oJ)
+		// C. Save JSON
 		if jsonSW != nil {
 			b, _ := json.Marshal(res)
-			if !first {
-				fmt.Fprint(jsonSW, ",\n")
-			}
+			if !first { fmt.Fprint(jsonSW, ",\n") }
 			jsonSW.Write(b)
 		}
 
-		// D. Persistent Reporting (Legacy)
+		// D. Persistent Reporting
 		if reportFile != nil {
 			fmt.Fprintf(reportFile, "### [%s] %s\n- Line: %d\n- Content: `%s`\n", res.Pattern, res.File, res.Line, res.Content)
-			for _, td := range res.ToolData {
-				fmt.Fprintf(reportFile, "  - **%s**: %s\n", td.Label, td.Value)
-			}
+			for _, td := range res.ToolData { fmt.Fprintf(reportFile, "  - **%s**: %s\n", td.Label, td.Value) }
 			fmt.Fprintln(reportFile, "")
 		}
 
-		// E. Legacy Data Stream (Stdout or -o)
+		// E. Legacy Data Stream
 		if legacyDataOut != io.Discard {
 			if jsonMode || format == "json" {
 				b, _ := json.Marshal(res)
-				if !first {
-					fmt.Fprintf(legacyDataOut, ",\n")
-				}
+				if !first { fmt.Fprintf(legacyDataOut, ",\n") }
 				fmt.Fprint(legacyDataOut, string(b))
 			} else if format == "csv" {
 				csvWriter.Write([]string{res.Pattern, res.File, fmt.Sprintf("%d", res.Line), res.Content})
@@ -188,9 +155,7 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 			} else if outputTemplate != "" {
 				fmt.Fprintln(legacyDataOut, formatResult(outputTemplate, res))
 			} else {
-				if format == "text" || format == "" {
-					fmt.Fprintln(legacyDataOut, res.Content)
-				}
+				if format == "text" || format == "" { fmt.Fprintln(legacyDataOut, res.Content) }
 			}
 		}
 
@@ -206,31 +171,16 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		fmt.Fprintf(jsonSW, "\n]\n")
 		jsonSW.Close()
 	}
-	if textSW != nil {
-		textSW.Close()
-	}
-	if format == "csv" {
-		csvWriter.Flush()
-	}
-	if format == "table" {
-		table.Render()
-	}
-	if legacySW != nil {
-		legacySW.Close()
-	}
-	if reportFile != nil {
-		reportFile.Close()
-	}
+	if textSW != nil { textSW.Close() }
+	if format == "csv" { csvWriter.Flush() }
+	if format == "table" { table.Render() }
+	if legacySW != nil { legacySW.Close() }
+	if reportFile != nil { reportFile.Close() }
 
-	// Generate HTML Report
 	if outputHTML != "" {
 		reportData := report.ReportData{
-			Title:     "ZetGrep Scan Results",
-			StartTime: start,
-			EndTime:   time.Now(),
-			Duration:  time.Since(start).Round(time.Millisecond).String(),
-			TotalHits: hitCount,
-			Results:   htmlResults,
+			Title: "ZetGrep Scan Results", StartTime: start, EndTime: time.Now(),
+			Duration: time.Since(start).Round(time.Millisecond).String(), TotalHits: hitCount, Results: htmlResults,
 		}
 		_ = report.GenerateHTMLReport(reportData, outputHTML)
 	}
@@ -240,16 +190,12 @@ func outputResults(resultChan <-chan *models.Result, start time.Time) {
 		duration := time.Since(start).Round(time.Millisecond)
 		fmt.Fprintf(os.Stderr, "\n%s\n", au.Gray(15, strings.Repeat(lineChar, 80)))
 		summary := fmt.Sprintf("Summary: %s hits | %s", au.Bold(fmt.Sprintf("%d", hitCount)), au.Bold(duration))
-		
 		var saved []string
 		if outputJSON != "" { saved = append(saved, outputJSON) }
 		if outputText != "" { saved = append(saved, outputText) }
 		if outputHTML != "" { saved = append(saved, outputHTML) }
 		if outputFile != "" { saved = append(saved, outputFile) }
-		
-		if len(saved) > 0 {
-			summary += fmt.Sprintf(" | Saved to: %s", au.Underline(strings.Join(saved, ", ")))
-		}
+		if len(saved) > 0 { summary += fmt.Sprintf(" | Saved to: %s", au.Underline(strings.Join(saved, ", "))) }
 		fmt.Fprintf(os.Stderr, "%s %s\n\n", au.Green(symbolCheck), summary)
 	}
 }
@@ -261,17 +207,10 @@ func formatResult(tmpl string, res *models.Result) string {
 	out = strings.ReplaceAll(out, "{{line}}", fmt.Sprintf("%d", res.Line))
 	out = strings.ReplaceAll(out, "{{content}}", res.Content)
 	out = strings.ReplaceAll(out, "{{entropy}}", fmt.Sprintf("%.2f", res.Entropy))
-	
 	mainMatch := res.Content
-	if len(res.Matches) > 0 {
-		mainMatch = res.Matches[0]
-	}
+	if len(res.Matches) > 0 { mainMatch = res.Matches[0] }
 	out = strings.ReplaceAll(out, "{{match}}", mainMatch)
-
-	for i, m := range res.Matches {
-		out = strings.ReplaceAll(out, fmt.Sprintf("{{match[%d]}}", i), m)
-	}
-
+	for i, m := range res.Matches { out = strings.ReplaceAll(out, fmt.Sprintf("{{match[%d]}}", i), m) }
 	for _, td := range res.ToolData {
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.ToolID), td.Value)
 		out = strings.ReplaceAll(out, fmt.Sprintf("{{tool:%s}}", td.Label), td.Value)

@@ -26,7 +26,11 @@ func (s *Server) Broadcast(res *models.Result) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for client := range s.clients {
-		client <- res
+		select {
+		case client <- res:
+		default:
+			// Client channel full, skip to avoid blocking the engine
+		}
 	}
 }
 
