@@ -170,21 +170,38 @@ func (s *ScannerService) executeToolWithLimit(t models.Tool, res models.Result) 
 	return t.Execute(res)
 }
 
-func unescapeContent(s string) string {
-	if !strings.Contains(s, "\\") {
-		return s
+func unescapeContent(b []byte) []byte {
+	if !bytes.Contains(b, []byte("\\")) {
+		return b
 	}
-	s = strings.ReplaceAll(s, "\\n", "\n")
-	s = strings.ReplaceAll(s, "\\r", "\r")
-	s = strings.ReplaceAll(s, "\\t", "\t")
-	s = strings.ReplaceAll(s, "\\\"", "\"")
-	if strings.Contains(s, "\\u") {
-		var decoded string
-		if err := json.Unmarshal([]byte("\""+s+"\""), &decoded); err == nil {
-			s = decoded
+	
+	res := make([]byte, 0, len(b))
+	for i := 0; i < len(b); i++ {
+		if b[i] == '\\' && i+1 < len(b) {
+			switch b[i+1] {
+			case 'n': res = append(res, '\n'); i++
+			case 'r': res = append(res, '\r'); i++
+			case 't': res = append(res, '\t'); i++
+			case '"': res = append(res, '"'); i++
+			case '\\': res = append(res, '\\'); i++
+			case 'u':
+				if i+5 < len(b) {
+					var decoded string
+					if err := json.Unmarshal(append([]byte("\""), append(b[i:i+6], '"')...), &decoded); err == nil {
+						res = append(res, []byte(decoded)...)
+						i += 5
+						continue
+					}
+				}
+				res = append(res, b[i])
+			default:
+				res = append(res, b[i])
+			}
+		} else {
+			res = append(res, b[i])
 		}
 	}
-	return s
+	return res
 }
 
 func (s *ScannerService) resolveTargets(paths []string) []string {
@@ -311,7 +328,7 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
-	resultChan := make(chan *models.Result, 5000)
+	resultChan := make(chan *models.Result, 10000)
 
 	targets := s.resolveTargets(opts.TargetPaths)
 	var globalTotalSize int64
@@ -394,7 +411,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	var preFilter *PreFilter
 	if opts.UseBloom { preFilter = NewPreFilter(activePatterns) }
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	recordChan := make(chan ScanRecord, 2000)
+	recordChan := make(chan ScanRecord, 5000)
 	var wg sync.WaitGroup
 	numWorkers := opts.Concurrency
 	if numWorkers <= 0 { numWorkers = runtime.NumCPU() * 2 }
@@ -407,17 +424,36 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			for rec := range recordChan {
 				for atomic.LoadInt32(&s.isPaused) == 1 { time.Sleep(1 * time.Second) }
 				if atomic.LoadInt32(&s.isThrottled) == 1 { time.Sleep(100 * time.Millisecond) }
+				
 				content := rec.Content
+				
+				// Fast-path 0: Bloom Pre-Filter (LAZY)
+				// We ONLY proceed to unescape and beautify if the bloom filter thinks there's a hit
 				if preFilter != nil && !preFilter.MayMatch(content) {
 					if bar != nil { bar.Add(rec.RawLength) }
 					PutBuffer(content)
 					continue
 				}
+
 				if s.Config.Input.Decode {
-					decoded := []byte(unescapeContent(string(content)))
-					PutBuffer(content)
-					content = decoded
+					decoded := unescapeContent(content)
+					if len(decoded) != len(content) || !bytes.Equal(decoded, content) {
+						PutBuffer(content)
+						content = decoded
+					}
 				}
+
+				// LAZY POST-PROCESS: Only run expensive beautifier if bloom filter triggered
+				postCmd := ""
+				if cmd, ok := s.Config.Input.PostProcess[rec.ID]; ok { postCmd = cmd } else if cmd, ok := s.Config.Input.PostProcess["$"]; ok { postCmd = cmd }
+				if postCmd != "" {
+					var cmd *exec.Cmd
+					if runtime.GOOS == "windows" { cmd = exec.CommandContext(ctx, "cmd", "/c", "echo "+string(content)+" | "+postCmd) } else {
+						cmd = exec.CommandContext(ctx, "sh", "-c", "echo '"+strings.ReplaceAll(string(content), "'", "'\\''")+"' | "+postCmd)
+					}
+					if out, err := cmd.Output(); err == nil { content = []byte(strings.TrimSpace(string(out))) }
+				}
+
 				if litMatcher != nil {
 					matches := litMatcher.Match(string(content))
 					for _, m := range matches {
@@ -679,7 +715,7 @@ func (s *ScannerService) DiagnoseLine(line string, patterns []string) []string {
 				content, ok = getNestedField(data, targetField)
 			}
 			if ok {
-				if s.Config.Input.Decode { content = unescapeContent(content) }
+				if s.Config.Input.Decode { content = unescapeContent([]byte(content)) }
 				contents = append(contents, []byte(content))
 			}
 		}
