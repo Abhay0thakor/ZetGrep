@@ -311,19 +311,39 @@ func (s *ScannerService) handleMatch(res *models.Result, opts ScannerOptions, ac
 
 func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-chan *models.Result, error) {
 	slog.Debug("Scan started", "format", s.Config.Input.Format)
-	resultChan := make(chan *models.Result, 1000)
+	// Larger buffer to prevent worker stall
+	resultChan := make(chan *models.Result, 5000)
+
+	// Pre-calculate total size
+	targets := s.resolveTargets(opts.TargetPaths)
+	var globalTotalSize int64
+	for _, path := range targets {
+		if info, err := os.Stat(path); err == nil { globalTotalSize += info.Size() }
+	}
+
+	var bar *progressbar.ProgressBar
+	if !opts.Silent && globalTotalSize > 0 {
+		bar = progressbar.NewOptions64(globalTotalSize,
+			progressbar.OptionSetDescription("Scanning"),
+			progressbar.OptionSetWriter(os.Stderr),
+			progressbar.OptionShowBytes(true),
+			progressbar.OptionSetWidth(30),
+			progressbar.OptionThrottle(65*time.Millisecond),
+			progressbar.OptionShowCount(),
+			progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
+			progressbar.OptionSpinnerType(14),
+			progressbar.OptionSetPredictTime(true),
+			progressbar.OptionSetTheme(progressbar.Theme{
+				Saucer: "=", SaucerHead: ">", SaucerPadding: " ", BarStart: "[", BarEnd: "]",
+			}),
+		)
+	}
 
 	if opts.ThermalThreshold > 0 {
 		go utils.MonitorThermal(opts.ThermalThreshold, opts.ThermalThreshold-15.0, func() {
 			atomic.StoreInt32(&s.isPaused, 1)
-			msg := fmt.Sprintf("🌡️ Thermal Protection: CPU temperature reached %.1f°C. Pausing scan...", opts.ThermalThreshold)
-			slog.Warn(msg)
-			if opts.Notify { s.sendNotification(msg) }
 		}, func() {
 			atomic.StoreInt32(&s.isPaused, 0)
-			msg := "🟢 CPU Cooled down. Resuming scan."
-			slog.Info(msg)
-			if opts.Notify { s.sendNotification(msg) }
 		})
 	}
 
@@ -333,17 +353,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				stats, err := utils.GetSystemStats()
 				if err == nil {
 					if opts.MaxRAMThreshold > 0 && stats.RAMPercent >= opts.MaxRAMThreshold {
-						if atomic.LoadInt32(&s.isPaused) == 0 {
-							atomic.StoreInt32(&s.isPaused, 1)
-							msg := fmt.Sprintf("🚨 Memory Pressure: RAM usage reached %.1f%%. Pausing scan...", stats.RAMPercent)
-							slog.Warn(msg)
-							if opts.Notify { s.sendNotification(msg) }
-						}
+						atomic.StoreInt32(&s.isPaused, 1)
 					} else if opts.MaxRAMThreshold > 0 && stats.RAMPercent < (opts.MaxRAMThreshold-10.0) {
-						if atomic.LoadInt32(&s.isPaused) == 1 {
-							atomic.StoreInt32(&s.isPaused, 0)
-							slog.Info("🟢 Memory pressure relieved. Resuming scan.")
-						}
+						atomic.StoreInt32(&s.isPaused, 0)
 					}
 					if opts.AutoScale && stats.CPUUsage > 90.0 { atomic.StoreInt32(&s.isThrottled, 1) } else { atomic.StoreInt32(&s.isThrottled, 0) }
 				}
@@ -383,7 +395,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	var preFilter *PreFilter
 	if opts.UseBloom { preFilter = NewPreFilter(activePatterns) }
 	activeTools := s.getActiveTools(opts.ToolIDs)
-	recordChan := make(chan ScanRecord, 1000)
+	recordChan := make(chan ScanRecord, 2000)
 	var wg sync.WaitGroup
 	numWorkers := opts.Concurrency
 	if numWorkers <= 0 { numWorkers = runtime.NumCPU() * 2 }
@@ -394,7 +406,7 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 		go func() {
 			defer wg.Done()
 			for rec := range recordChan {
-				for atomic.LoadInt32(&s.isPaused) == 1 { time.Sleep(5 * time.Second) }
+				for atomic.LoadInt32(&s.isPaused) == 1 { time.Sleep(1 * time.Second) }
 				if atomic.LoadInt32(&s.isThrottled) == 1 { time.Sleep(100 * time.Millisecond) }
 				content := rec.Content
 				if preFilter != nil && !preFilter.MayMatch(content) {
@@ -453,43 +465,11 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 	go func() {
 		defer close(resultChan)
 		startTime := time.Now()
-		var innerWg sync.WaitGroup
-		innerWg.Add(1)
-		go func() { defer innerWg.Done(); wg.Wait() }()
-
-		targets := s.resolveTargets(opts.TargetPaths)
-		var globalTotalSize int64
-		for _, path := range targets {
-			if info, err := os.Stat(path); err == nil { globalTotalSize += info.Size() }
-		}
-
+		
 		var globalBytesRead int64
 		var lastNotifiedPct int = -1
 		var lastCooldownPct int = 0
 		var progressMu sync.Mutex
-
-		var bar *progressbar.ProgressBar
-		if !opts.Silent && globalTotalSize > 0 {
-			theme := progressbar.Theme{
-				Saucer:        "=",
-				SaucerHead:    ">",
-				SaucerPadding: " ",
-				BarStart:      "[",
-				BarEnd:        "]",
-			}
-			bar = progressbar.NewOptions64(globalTotalSize,
-				progressbar.OptionSetDescription("Scanning"),
-				progressbar.OptionSetWriter(os.Stderr),
-				progressbar.OptionShowBytes(true),
-				progressbar.OptionSetWidth(30),
-				progressbar.OptionThrottle(65*time.Millisecond),
-				progressbar.OptionShowCount(),
-				progressbar.OptionOnCompletion(func() { fmt.Fprint(os.Stderr, "\n") }),
-				progressbar.OptionSpinnerType(14),
-				progressbar.OptionSetPredictTime(true),
-				progressbar.OptionSetTheme(theme),
-			)
-		}
 
 		for i, path := range targets {
 			if opts.ResumeFile != "" && i < s.Resume.FileIndex {
@@ -513,12 +493,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				}
 			}
 
-			// Update bar description for current file
-			if bar != nil {
-				bar.Describe(fmt.Sprintf("Scanning %s", filepath.Base(path)))
-			}
+			if bar != nil { bar.Describe(fmt.Sprintf("Scanning %s", filepath.Base(path))) }
 
-			// Try Mmap Parallel Path if enabled
+			// Try Mmap Parallel Path
 			if opts.UseMmap && s.Config.Input.PreProcess == "" && path != "stdin" && path != "-" {
 				f, err := os.Open(path)
 				if err == nil {
@@ -526,13 +503,9 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 					if err == nil {
 						recs, _ := s.Parser.GetRecordsParallel(ctx, m, path, numWorkers)
 						for rec := range recs {
-							// Update progress bar for mmap path
-							if bar != nil && rec.RawLength > 0 {
-								bar.Add(rec.RawLength)
-							}
+							if bar != nil && rec.RawLength > 0 { bar.Add(rec.RawLength) }
 							select {
-							case <-ctx.Done():
-								m.Unmap(); f.Close(); return
+							case <-ctx.Done(): m.Unmap(); f.Close(); return
 							case recordChan <- rec:
 							}
 						}
@@ -554,13 +527,13 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			trackedReader := &progressReader{
 				r: sourceReader,
 				onRead: func(n int) {
-					// In non-mmap mode, the parser handles bar updates via ScanRecord.RawLength
-					// To avoid double counting, we don't update bar here anymore.
-					// We only use this to track globalBytesRead for notifications/cooldown.
 					progressMu.Lock()
 					defer progressMu.Unlock()
 					globalBytesRead += int64(n)
 					
+					// Update bar for standard reader path
+					if bar != nil { bar.Add(n) }
+
 					if globalTotalSize > 0 {
 						pct := int((float64(globalBytesRead) / float64(globalTotalSize)) * 100)
 						if pct > 100 { pct = 100 }
@@ -575,9 +548,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 						if opts.CooldownEvery > 0 && pct > 0 && pct < 100 && pct % opts.CooldownEvery == 0 && pct > lastCooldownPct {
 							lastCooldownPct = pct
 							duration, _ := time.ParseDuration(opts.CooldownTime)
-							msg := fmt.Sprintf("❄️ Cooldown Paused (%d%%) for %s", pct, opts.CooldownTime)
-							slog.Info(msg)
-							if opts.Notify { s.sendNotification(msg) }
 							time.Sleep(duration)
 						}
 					}
@@ -601,9 +571,6 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 				recordCount := 0
 				for rec := range recs {
 					recordCount++
-					if bar != nil && rec.RawLength > 0 {
-						bar.Add(rec.RawLength)
-					}
 					if opts.ResumeFile != "" && recordCount % 10000 == 0 {
 						s.Resume.FileIndex = i
 						s.Resume.LineIndex = rec.Line
@@ -628,7 +595,8 @@ func (s *ScannerService) RunScan(ctx context.Context, opts ScannerOptions) (<-ch
 			if opts.Incremental && opts.StateDB != nil && err == nil { _ = opts.StateDB.MarkScanned(path, info.Size(), info.ModTime()) }
 		}
 		close(recordChan)
-		innerWg.Wait()
+		wg.Wait() // Wait for workers to finish before closing results
+		
 		if opts.Notify {
 			finalHits := 0
 			if hitCounter != nil { finalHits = hitCounter.count }
